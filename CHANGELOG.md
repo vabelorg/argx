@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-15
+
 ### Added
 
 - Command-line argument parser for C99, with no dependencies beyond the C standard library.
@@ -14,4 +16,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Help and usage text generated from the schema.
 - Builds on Linux, macOS and Windows; usable through CMake or pkg-config.
 
-[Unreleased]: https://github.com/vabelorg/argx/commits/main
+[Unreleased]: https://github.com/vabelorg/argx/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/vabelorg/argx/releases/tag/v0.1.0
