@@ -1,0 +1,1535 @@
+/*
+ * Copyright (c) 2026 The ArgX Authors
+ * SPDX-License-Identifier: MIT
+ *
+ * Tests of the public parsing API for the parse errors: what a result of
+ * argx_parse() of <argx/parse.h> tells about a command line that does
+ * not match the schema, read back with the argx_result_error_*()
+ * functions.
+ *
+ * This is the one place where every kind of parse error is checked field by
+ * field: what the parse returns, argx_result_error(), the kind, the
+ * argument, the value, the index, the source, the command, the option, the
+ * positional, the letter of a bundle and the text of the message. The other
+ * tests of the parsing check the kind and the message where they need them.
+ * The error of a wide argument that cannot be converted needs
+ * argx_parse_wide() and is not here.
+ *
+ * The tests also cover which of several errors is reported, what a result
+ * with a parse error still holds, what a result without one returns from
+ * the functions that read an error, and that the strings of an error do not
+ * point into the argv of the caller.
+ *
+ * Every test uses the test allocator ("../support/test_allocator.h"). Its
+ * state and the allocator that is set are shared by all the tests of this
+ * executable. A test starts with an install, destroys what it created, sets
+ * the default allocator back before it ends, and ends with check_clean().
+ */
+#include <argx/argx.h>
+
+#include "../support/test_allocator.h"
+
+#include <naos/naos.h>
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+/* The number of arguments of an argv array. */
+#define ARGC(argv) ((int)(sizeof(argv) / sizeof((argv)[0])))
+
+/*
+ * The end of every test: the test allocator has no live block and saw no
+ * violation of the allocator contract.
+ */
+static void check_clean(void)
+{
+    NAOS_CHECK_UINT_EQ(argx_test_allocator_live(), 0);
+    NAOS_CHECK_UINT_EQ(argx_test_allocator_violations(), 0);
+}
+
+/* ---- Building a schema --------------------------------------------------- */
+
+/* Installs the test allocator and creates the root of a schema. */
+static argx_command_t *create_root(const char *name)
+{
+    argx_command_t *root = NULL;
+
+    argx_test_allocator_install();
+    NAOS_REQUIRE_TRUE(argx_command_create(name, &root) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(root != NULL);
+    return root;
+}
+
+static argx_command_t *add_subcommand(argx_command_t *command, const char *name)
+{
+    argx_command_t *subcommand = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_subcommand(command, name, &subcommand) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(subcommand != NULL);
+    return subcommand;
+}
+
+static argx_option_t *add_flag(argx_command_t *command, char short_name, const char *long_name)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_flag(command, short_name, long_name, &option) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(option != NULL);
+    return option;
+}
+
+static argx_option_t *add_count(argx_command_t *command, char short_name, const char *long_name)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_count(command, short_name, long_name, &option) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(option != NULL);
+    return option;
+}
+
+/* Adds a negatable flag with the initial state initial to command. */
+static argx_option_t *add_negatable(argx_command_t *command, char short_name, const char *long_name,
+                                    bool initial)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_negatable(command, short_name, long_name, &option) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(option != NULL);
+    NAOS_REQUIRE_TRUE(argx_option_set_initial(option, initial) == ARGX_ERROR_NONE);
+    return option;
+}
+
+/*
+ * Adds an option that takes a value to command. default_value may be
+ * NULL: the option has no default value then.
+ */
+static argx_option_t *add_value(argx_command_t *command, char short_name, const char *long_name,
+                                const argx_type_t *type, const char *default_value)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_value(command, short_name, long_name, type, &option) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(option != NULL);
+    if (default_value != NULL)
+    {
+        NAOS_REQUIRE_TRUE(argx_option_set_default(option, default_value) == ARGX_ERROR_NONE);
+    }
+    return option;
+}
+
+/* Adds an option that takes a value and must be given to command. */
+static argx_option_t *add_required(argx_command_t *command, char short_name, const char *long_name,
+                                   const argx_type_t *type)
+{
+    argx_option_t *option = add_value(command, short_name, long_name, type, NULL);
+
+    NAOS_REQUIRE_TRUE(argx_option_set_required(option, true) == ARGX_ERROR_NONE);
+    return option;
+}
+
+/*
+ * Adds a positional to command. default_value may be NULL: the positional
+ * has no default value then.
+ */
+static argx_positional_t *add_positional(argx_command_t *command, const char *name,
+                                         const argx_type_t *type, argx_arity_t arity,
+                                         const char *default_value)
+{
+    argx_positional_t *positional = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_positional(command, name, type, arity, &positional) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(positional != NULL);
+    if (default_value != NULL)
+    {
+        NAOS_REQUIRE_TRUE(argx_positional_set_default(positional, default_value) == ARGX_ERROR_NONE);
+    }
+    return positional;
+}
+
+static void validate(argx_command_t *root)
+{
+    NAOS_REQUIRE_TRUE(argx_command_validate(root, NULL, NULL, NULL) == ARGX_ERROR_NONE);
+}
+
+/* Lets a command line end in command without naming a subcommand. */
+static void make_subcommand_optional(argx_command_t *command)
+{
+    NAOS_REQUIRE_TRUE(argx_command_set_subcommand_optional(command, true) == ARGX_ERROR_NONE);
+}
+
+/* Destroys the schema and ends the test: nothing stays allocated. */
+static void destroy_root(argx_command_t *root)
+{
+    argx_command_destroy(root);
+    argx_test_allocator_uninstall();
+    check_clean();
+}
+
+/* ---- What a parse error is expected to be -------------------------------- */
+
+/*
+ * Every field of a parse error. A string that is NULL is expected to read
+ * as NULL.
+ */
+typedef struct expected
+{
+    argx_parse_error_kind_t kind;
+    const char *argument;
+    const char *value;
+    size_t index;
+    argx_source_t source;
+    const argx_command_t *command;
+    const argx_option_t *option;
+    const argx_positional_t *positional;
+    char short_name;
+    const char *message;
+} expected_t;
+
+/*
+ * An error of the kind at the argument with the index of the command line,
+ * found while command was the current command. It has no value, no option,
+ * no positional and no letter: a test sets the ones that its kind has.
+ */
+static expected_t on_command_line(argx_parse_error_kind_t kind, const char *argument, size_t index,
+                                  const argx_command_t *command, const char *message)
+{
+    expected_t expected;
+
+    expected.kind = kind;
+    expected.argument = argument;
+    expected.value = NULL;
+    expected.index = index;
+    expected.source = ARGX_SOURCE_COMMAND_LINE;
+    expected.command = command;
+    expected.option = NULL;
+    expected.positional = NULL;
+    expected.short_name = '\0';
+    expected.message = message;
+    return expected;
+}
+
+/*
+ * An error of the kind that is not at an argument: its source is source,
+ * ARGX_SOURCE_NONE for something required that is missing and
+ * ARGX_SOURCE_DEFAULT for a default value, and command is the command of
+ * the option or the positional, which a test sets.
+ */
+static expected_t off_command_line(argx_parse_error_kind_t kind, argx_source_t source,
+                                   const argx_command_t *command, const char *message)
+{
+    expected_t expected = on_command_line(kind, NULL, 0, command, message);
+
+    expected.source = source;
+    return expected;
+}
+
+/*
+ * Checks that text is expected: NULL, or a string with the same
+ * characters.
+ */
+static void check_text(const char *text, const char *expected)
+{
+    if (expected == NULL)
+    {
+        NAOS_CHECK_TRUE(text == NULL);
+    }
+    else
+    {
+        NAOS_REQUIRE_TRUE(text != NULL);
+        NAOS_CHECK_STR_EQ(text, expected);
+    }
+}
+
+/* Checks every field of the parse error of result. */
+static void check_error(const argx_result_t *result, const expected_t *expected)
+{
+    NAOS_CHECK_INT_EQ(argx_result_error(result), ARGX_ERROR_INVALID_COMMAND_LINE);
+    NAOS_CHECK_INT_EQ(argx_result_error_kind(result), expected->kind);
+    check_text(argx_result_error_argument(result), expected->argument);
+    check_text(argx_result_error_value(result), expected->value);
+    NAOS_CHECK_UINT_EQ(argx_result_error_index(result), expected->index);
+    NAOS_CHECK_INT_EQ(argx_result_error_source(result), expected->source);
+    NAOS_CHECK_TRUE(argx_result_error_command(result) == expected->command);
+    NAOS_CHECK_TRUE(argx_result_error_option(result) == expected->option);
+    NAOS_CHECK_TRUE(argx_result_error_positional(result) == expected->positional);
+    NAOS_CHECK_INT_EQ(argx_result_error_short_name(result), expected->short_name);
+    check_text(argx_result_error_message(result), expected->message);
+}
+
+/*
+ * Parses argv, which must have the parse error expected, and checks every
+ * field of the error. Returns the result, which the caller destroys.
+ */
+static argx_result_t *parse_error(const argx_command_t *root, int argc, char *const *argv,
+                                  const expected_t *expected)
+{
+    argx_result_t *result = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_parse(root, argc, argv, &result) == ARGX_ERROR_INVALID_COMMAND_LINE);
+    NAOS_REQUIRE_TRUE(result != NULL);
+    check_error(result, expected);
+    return result;
+}
+
+/* The same for a test that reads nothing else from the result. */
+static void expect_error(const argx_command_t *root, int argc, char *const *argv,
+                         const expected_t *expected)
+{
+    argx_result_destroy(parse_error(root, argc, argv, expected));
+}
+
+/*
+ * Parses argv, which must match the schema. Returns the result, which the
+ * caller destroys.
+ */
+static argx_result_t *parse_ok(const argx_command_t *root, int argc, char *const *argv)
+{
+    argx_result_t *result = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_parse(root, argc, argv, &result) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(result != NULL);
+    return result;
+}
+
+/* ---- The schema of most tests -------------------------------------------- */
+
+/*
+ * tool [-v|--verbose] [-d|--debug]... [-c|--color|--no-color] [-n|--num INT]
+ *      [--output STRING]
+ *   run [-f|--force] [-q|--quiet]... [-k|--cache|--no-cache] [-j|--jobs INT]
+ *       [--name STRING] [-h|--help] SRC [COUNT]
+ *   status [-a|--all]
+ *   remote
+ *     add NAME
+ *
+ * --color is on at first and --cache off. --output has the default value
+ * "out.txt" and --name "anon". SRC is required; COUNT is optional and an
+ * integer. status has no positional; tool and remote have subcommands.
+ */
+typedef struct fixture
+{
+    argx_command_t *root;
+    argx_option_t *verbose;
+    argx_option_t *debug;
+    argx_option_t *color;
+    argx_option_t *num;
+    argx_option_t *output;
+    argx_command_t *run;
+    argx_option_t *force;
+    argx_option_t *quiet;
+    argx_option_t *cache;
+    argx_option_t *jobs;
+    argx_option_t *name;
+    argx_option_t *help;
+    argx_positional_t *src;
+    argx_positional_t *count;
+    argx_command_t *status;
+    argx_option_t *all;
+    argx_command_t *remote;
+    argx_command_t *add;
+    argx_positional_t *remote_name;
+} fixture_t;
+
+static void set_up(fixture_t *fixture)
+{
+    fixture->root = create_root("tool");
+    fixture->verbose = add_flag(fixture->root, 'v', "verbose");
+    fixture->debug = add_count(fixture->root, 'd', "debug");
+    fixture->color = add_negatable(fixture->root, 'c', "color", true);
+    fixture->num = add_value(fixture->root, 'n', "num", argx_type_int(), NULL);
+    fixture->output = add_value(fixture->root, '\0', "output", argx_type_string(), "out.txt");
+
+    fixture->run = add_subcommand(fixture->root, "run");
+    fixture->force = add_flag(fixture->run, 'f', "force");
+    fixture->quiet = add_count(fixture->run, 'q', "quiet");
+    fixture->cache = add_negatable(fixture->run, 'k', "cache", false);
+    fixture->jobs = add_value(fixture->run, 'j', "jobs", argx_type_int(), NULL);
+    fixture->name = add_value(fixture->run, '\0', "name", argx_type_string(), "anon");
+    fixture->help = add_flag(fixture->run, 'h', "help");
+    fixture->src = add_positional(fixture->run, "SRC", argx_type_string(), ARGX_ARITY_REQUIRED, NULL);
+    fixture->count = add_positional(fixture->run, "COUNT", argx_type_int(), ARGX_ARITY_OPTIONAL, NULL);
+
+    fixture->status = add_subcommand(fixture->root, "status");
+    fixture->all = add_flag(fixture->status, 'a', "all");
+
+    fixture->remote = add_subcommand(fixture->root, "remote");
+    fixture->add = add_subcommand(fixture->remote, "add");
+    fixture->remote_name =
+        add_positional(fixture->add, "NAME", argx_type_string(), ARGX_ARITY_REQUIRED, NULL);
+
+    validate(fixture->root);
+}
+
+/* ---- The errors of the scan, kind by kind -------------------------------- */
+
+NAOS_TEST(an_unknown_option_has_its_argument_and_no_value)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    /*
+     * A long option: the argument is the whole of it, the name of the
+     * message ends before the '='.
+     */
+    {
+        char *argv[] = { "tool", "-v", "run", "--bogus=1", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "--bogus=1", 3, fixture.run,
+                                   "unknown option '--bogus'");
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * An option of the parent is unknown after the name of the subcommand:
+     * the command of the error is the current command.
+     */
+    {
+        char *argv[] = { "tool", "run", "main.c", "--verbose" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "--verbose", 3, fixture.run,
+                                   "unknown option '--verbose'");
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * A letter of a bundle: the argument is the whole bundle, and the
+     * letter is told apart.
+     */
+    {
+        char *argv[] = { "tool", "-v", "run", "-fqx", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "-fqx", 3, fixture.run,
+                                   "unknown option '-x'");
+        expected.short_name = 'x';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* In the root command. */
+    {
+        char *argv[] = { "tool", "-d", "-dz", "run" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "-dz", 2, fixture.root,
+                                   "unknown option '-z'");
+        expected.short_name = 'z';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(an_unknown_subcommand_has_its_argument_as_its_value)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    {
+        char *argv[] = { "tool", "-v", "remote", "ad", "origin" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_SUBCOMMAND, "ad", 3, fixture.remote,
+                                   "unknown command 'ad'");
+        expected.value = "ad";
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    {
+        char *argv[] = { "tool", "-v", "-d", "comit" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_SUBCOMMAND, "comit", 3, fixture.root,
+                                   "unknown command 'comit'");
+        expected.value = "comit";
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(a_missing_value_has_the_argument_of_the_option_and_the_option)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    /* A long option that is the last argument. */
+    {
+        char *argv[] = { "tool", "run", "main.c", "--jobs" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_MISSING_VALUE, "--jobs", 3, fixture.run,
+                                   "option '--jobs' requires a value");
+        expected.option = fixture.jobs;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* The last letter of a bundle that is the last argument. */
+    {
+        char *argv[] = { "tool", "run", "main.c", "-fqj" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_MISSING_VALUE, "-fqj", 3, fixture.run,
+                                   "option '-j' requires a value");
+        expected.option = fixture.jobs;
+        expected.short_name = 'j';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* In the root command. */
+    {
+        char *argv[] = { "tool", "-v", "--num" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_MISSING_VALUE, "--num", 2, fixture.root,
+                                   "option '--num' requires a value");
+        expected.option = fixture.num;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(an_unexpected_value_has_what_follows_the_equals_sign_and_the_option)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    /* A flag. */
+    {
+        char *argv[] = { "tool", "run", "main.c", "--force=yes" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_VALUE, "--force=yes", 3, fixture.run,
+                                   "option '--force' does not take a value");
+        expected.value = "yes";
+        expected.option = fixture.force;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* A count. */
+    {
+        char *argv[] = { "tool", "-v", "--debug=2", "run" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_VALUE, "--debug=2", 2, fixture.root,
+                                   "option '--debug' does not take a value");
+        expected.value = "2";
+        expected.option = fixture.debug;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* A negatable flag, by its name. */
+    {
+        char *argv[] = { "tool", "run", "--cache=on", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_VALUE, "--cache=on", 2, fixture.run,
+                                   "option '--cache' does not take a value");
+        expected.value = "on";
+        expected.option = fixture.cache;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * A negatable flag, by its negated name: the message has the name as
+     * it was written.
+     */
+    {
+        char *argv[] = { "tool", "-v", "-d", "--no-color=never", "run" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_VALUE, "--no-color=never", 3, fixture.root,
+                                   "option '--no-color' does not take a value");
+        expected.value = "never";
+        expected.option = fixture.color;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * An empty value is a value: the empty string, not NULL. Everything
+     * after the first '=' is the value.
+     */
+    {
+        char *argv[] = { "tool", "run", "--force=", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_VALUE, "--force=", 2, fixture.run,
+                                   "option '--force' does not take a value");
+        expected.value = "";
+        expected.option = fixture.force;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    {
+        char *argv[] = { "tool", "run", "main.c", "2", "--quiet=a=b" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_VALUE, "--quiet=a=b", 4, fixture.run,
+                                   "option '--quiet' does not take a value");
+        expected.value = "a=b";
+        expected.option = fixture.quiet;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(an_invalid_value_of_an_option_has_the_argument_that_holds_the_value)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    /* --name=value: the argument is the whole of it. */
+    {
+        char *argv[] = { "tool", "run", "main.c", "--jobs=x" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "--jobs=x", 3, fixture.run,
+                                   "invalid value 'x' for option '--jobs' (expected integer)");
+        expected.value = "x";
+        expected.option = fixture.jobs;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* --name value: the argument and the index are those of the value. */
+    {
+        char *argv[] = { "tool", "run", "main.c", "--jobs", "many" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "many", 4, fixture.run,
+                                   "invalid value 'many' for option '--jobs' (expected integer)");
+        expected.value = "many";
+        expected.option = fixture.jobs;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* -nvalue: the argument is the whole of it, the name is the letter. */
+    {
+        char *argv[] = { "tool", "-v", "-nx", "run" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "-nx", 2, fixture.root,
+                                   "invalid value 'x' for option '-n' (expected integer)");
+        expected.value = "x";
+        expected.option = fixture.num;
+        expected.short_name = 'n';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * -n value: the argument and the index are those of the value; the
+     * letter is still told.
+     */
+    {
+        char *argv[] = { "tool", "-v", "-n", "x", "run" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "x", 3, fixture.root,
+                                   "invalid value 'x' for option '-n' (expected integer)");
+        expected.value = "x";
+        expected.option = fixture.num;
+        expected.short_name = 'n';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * The option that ends a bundle of several, with the value in the
+     * bundle and in the next argument.
+     */
+    {
+        char *argv[] = { "tool", "run", "-fqj1.5", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "-fqj1.5", 2, fixture.run,
+                                   "invalid value '1.5' for option '-j' (expected integer)");
+        expected.value = "1.5";
+        expected.option = fixture.jobs;
+        expected.short_name = 'j';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    {
+        char *argv[] = { "tool", "run", "-fqj", "--force", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "--force", 3, fixture.run,
+                                   "invalid value '--force' for option '-j' (expected integer)");
+        expected.value = "--force";
+        expected.option = fixture.jobs;
+        expected.short_name = 'j';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* An empty value. */
+    {
+        char *argv[] = { "tool", "--num=", "run" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "--num=", 1, fixture.root,
+                                   "invalid value '' for option '--num' (expected integer)");
+        expected.value = "";
+        expected.option = fixture.num;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(an_invalid_value_of_a_positional_has_the_positional)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    {
+        char *argv[] = { "tool", "run", "main.c", "-f", "ten" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "ten", 4, fixture.run,
+                                   "invalid value 'ten' for argument 'COUNT' (expected integer)");
+        expected.value = "ten";
+        expected.positional = fixture.count;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* After the terminator, where the value looks like an option. */
+    {
+        char *argv[] = { "tool", "run", "--", "main.c", "--jobs" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "--jobs", 4, fixture.run,
+                                   "invalid value '--jobs' for argument 'COUNT' (expected integer)");
+        expected.value = "--jobs";
+        expected.positional = fixture.count;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(an_unexpected_positional_has_its_argument_as_its_value)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    /* One more than the positionals of the command take. */
+    {
+        char *argv[] = { "tool", "run", "main.c", "2", "extra" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_POSITIONAL, "extra", 4, fixture.run,
+                                   "unexpected argument 'extra'");
+        expected.value = "extra";
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* A command that has no positional and no subcommand. */
+    {
+        char *argv[] = { "tool", "-v", "status", "--all", "now" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_POSITIONAL, "now", 4, fixture.status,
+                                   "unexpected argument 'now'");
+        expected.value = "now";
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * After the terminator, in a command that has subcommands: the name of
+     * a subcommand is not a name there.
+     */
+    {
+        char *argv[] = { "tool", "-v", "--", "run", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_POSITIONAL, "run", 3, fixture.root,
+                                   "unexpected argument 'run'");
+        expected.value = "run";
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    {
+        char *argv[] = { "tool", "remote", "--", "--add" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_POSITIONAL, "--add", 3, fixture.remote,
+                                   "unexpected argument '--add'");
+        expected.value = "--add";
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+/* ---- What is required and missing ---------------------------------------- */
+
+/*
+ * tool --token STRING
+ *   push REMOTE --branch STRING -a STRING [--tag STRING]
+ *   pull FILES...
+ *
+ * --token, --branch and -a are required; -a has no long name. REMOTE is
+ * required and was added to push before its options. FILES takes one or
+ * more.
+ */
+typedef struct required_fixture
+{
+    argx_command_t *root;
+    argx_option_t *token;
+    argx_command_t *push;
+    argx_positional_t *remote;
+    argx_option_t *branch;
+    argx_option_t *area;
+    argx_command_t *pull;
+    argx_positional_t *files;
+} required_fixture_t;
+
+static void set_up_required(required_fixture_t *fixture)
+{
+    fixture->root = create_root("tool");
+    fixture->push = add_subcommand(fixture->root, "push");
+    fixture->remote =
+        add_positional(fixture->push, "REMOTE", argx_type_string(), ARGX_ARITY_REQUIRED, NULL);
+    fixture->branch = add_required(fixture->push, 'b', "branch", argx_type_string());
+    fixture->area = add_required(fixture->push, 'a', NULL, argx_type_string());
+    (void)add_value(fixture->push, '\0', "tag", argx_type_string(), NULL);
+    fixture->pull = add_subcommand(fixture->root, "pull");
+    fixture->files =
+        add_positional(fixture->pull, "FILES", argx_type_string(), ARGX_ARITY_ONE_OR_MORE, NULL);
+    /* The option of the root is added last: the root still comes first. */
+    fixture->token = add_required(fixture->root, 't', "token", argx_type_string());
+    validate(fixture->root);
+}
+
+NAOS_TEST(a_missing_option_has_no_position_and_the_option)
+{
+    required_fixture_t fixture;
+    expected_t expected;
+
+    set_up_required(&fixture);
+
+    /*
+     * An option with a long name is named by it, also when it has a short
+     * name.
+     */
+    {
+        char *argv[] = { "tool", "-t", "secret", "push", "-a", "x", "origin" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, fixture.push,
+                                    "missing required option '--branch'");
+        expected.option = fixture.branch;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* An option that has a short name only. */
+    {
+        char *argv[] = { "tool", "-t", "secret", "push", "--branch", "main", "origin" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, fixture.push,
+                                    "missing required option '-a'");
+        expected.option = fixture.area;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * The command is that of the option, not the command that the command
+     * line ends in.
+     */
+    {
+        char *argv[] = { "tool", "pull", "a.txt" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, fixture.root,
+                                    "missing required option '--token'");
+        expected.option = fixture.token;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(a_missing_positional_has_no_position_and_the_positional)
+{
+    required_fixture_t fixture;
+    expected_t expected;
+
+    set_up_required(&fixture);
+
+    /* A positional that takes one argument. */
+    {
+        char *argv[] = { "tool", "--token=secret", "push", "-b", "main", "-ax" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_POSITIONAL, ARGX_SOURCE_NONE, fixture.push,
+                                    "missing required argument 'REMOTE'");
+        expected.positional = fixture.remote;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* A positional that takes one or more. */
+    {
+        char *argv[] = { "tool", "--token=secret", "pull" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_POSITIONAL, ARGX_SOURCE_NONE, fixture.pull,
+                                    "missing required argument 'FILES'");
+        expected.positional = fixture.files;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(a_missing_subcommand_has_no_position_and_the_command_that_misses_it)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    /* Nothing at all, with or without the name of the program. */
+    expected = off_command_line(ARGX_PARSE_ERROR_MISSING_SUBCOMMAND, ARGX_SOURCE_NONE, fixture.root,
+                                "missing required command");
+    {
+        char *argv[] = { "tool" };
+
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    expect_error(fixture.root, 0, NULL, &expected);
+    /* Options of the root alone. */
+    {
+        char *argv[] = { "tool", "-v", "--num", "5" };
+
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* After "--", nothing is a subcommand name, and nothing came. */
+    {
+        char *argv[] = { "tool", "-v", "--" };
+
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* A subcommand that has subcommands of its own: the command is that one. */
+    {
+        char *argv[] = { "tool", "remote" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_SUBCOMMAND, ARGX_SOURCE_NONE,
+                                    fixture.remote, "missing required command");
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(an_optional_subcommand_may_be_left_out_of_its_command_only)
+{
+    fixture_t fixture;
+    argx_result_t *result;
+
+    set_up(&fixture);
+    make_subcommand_optional(fixture.root);
+    validate(fixture.root);
+
+    /* The command line ends in the root. */
+    {
+        char *argv[] = { "tool", "-v" };
+
+        result = parse_ok(fixture.root, ARGC(argv), argv);
+        NAOS_CHECK_TRUE(argx_result_command(result) == fixture.root);
+        NAOS_CHECK_UINT_EQ(argx_result_command_count(result), 1);
+        argx_result_destroy(result);
+    }
+    /* The subcommands of remote are still required. */
+    {
+        char *argv[] = { "tool", "remote" };
+        expected_t expected =
+            off_command_line(ARGX_PARSE_ERROR_MISSING_SUBCOMMAND, ARGX_SOURCE_NONE, fixture.remote,
+                             "missing required command");
+
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* A command without subcommands never misses one. */
+    {
+        char *argv[] = { "tool", "status" };
+
+        result = parse_ok(fixture.root, ARGC(argv), argv);
+        NAOS_CHECK_TRUE(argx_result_command(result) == fixture.status);
+        argx_result_destroy(result);
+    }
+
+    destroy_root(fixture.root);
+}
+
+/* ---- A default value that its value type does not take ------------------- */
+
+/*
+ * A value type that takes every text but the one it is told to reject. Its
+ * value is the text. The validation of a schema converts the default values
+ * with it; a text is rejected only afterwards.
+ */
+typedef struct picky
+{
+    const char *rejected; /* NULL: every text is taken. */
+} picky_t;
+
+static argx_error_t picky_convert(const char *text, void *value, void *context)
+{
+    const picky_t *picky = context;
+
+    if ((picky->rejected != NULL) && (strcmp(text, picky->rejected) == 0))
+    {
+        return ARGX_ERROR_INVALID_VALUE;
+    }
+    memcpy(value, &text, sizeof(text));
+    return ARGX_ERROR_NONE;
+}
+
+NAOS_TEST(an_invalid_default_value_has_the_default_as_its_value_and_no_argument)
+{
+    picky_t picky = { NULL };
+    argx_type_t *type = NULL;
+    argx_command_t *root = create_root("tool");
+    argx_command_t *make;
+    argx_option_t *mode;
+    argx_option_t *shape;
+    argx_positional_t *target;
+    char *argv[] = { "tool", "make", "-v" };
+    expected_t expected;
+
+    NAOS_REQUIRE_TRUE(argx_type_create("word", sizeof(const char *), picky_convert, NULL, &picky,
+                                       &type) == ARGX_ERROR_NONE);
+    mode = add_value(root, 'm', "mode", type, "bad-mode");
+    make = add_subcommand(root, "make");
+    (void)add_flag(make, 'v', NULL);
+    shape = add_value(make, 's', NULL, type, "bad-shape");
+    target = add_positional(make, "TARGET", type, ARGX_ARITY_OPTIONAL, "bad-target");
+    validate(root);
+
+    argx_result_destroy(parse_ok(root, ARGC(argv), argv));
+
+    /*
+     * An option. The command is that of the option, not the command that
+     * the command line ends in.
+     */
+    picky.rejected = "bad-mode";
+    expected = off_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, ARGX_SOURCE_DEFAULT, root,
+                                "invalid default value 'bad-mode' for option '--mode' (expected word)");
+    expected.value = "bad-mode";
+    expected.option = mode;
+    expect_error(root, ARGC(argv), argv, &expected);
+
+    /* An option that has a short name only. */
+    picky.rejected = "bad-shape";
+    expected = off_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, ARGX_SOURCE_DEFAULT, make,
+                                "invalid default value 'bad-shape' for option '-s' (expected word)");
+    expected.value = "bad-shape";
+    expected.option = shape;
+    expect_error(root, ARGC(argv), argv, &expected);
+
+    /* A positional. */
+    picky.rejected = "bad-target";
+    expected = off_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, ARGX_SOURCE_DEFAULT, make,
+                                "invalid default value 'bad-target' for argument 'TARGET' (expected word)");
+    expected.value = "bad-target";
+    expected.positional = target;
+    expect_error(root, ARGC(argv), argv, &expected);
+
+    argx_command_destroy(root);
+    argx_type_destroy(type);
+    argx_test_allocator_uninstall();
+    check_clean();
+}
+
+/* ---- Which of several errors is reported --------------------------------- */
+
+NAOS_TEST(of_two_errors_the_one_that_is_earlier_on_the_command_line_is_reported)
+{
+    fixture_t fixture;
+    expected_t expected;
+
+    set_up(&fixture);
+
+    {
+        char *argv[] = { "tool", "-v", "--bogus", "run", "--jobs=x", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "--bogus", 2, fixture.root,
+                                   "unknown option '--bogus'");
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* The same two the other way round. */
+    {
+        char *argv[] = { "tool", "-v", "run", "--jobs=x", "--bogus", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "--jobs=x", 3, fixture.run,
+                                   "invalid value 'x' for option '--jobs' (expected integer)");
+        expected.value = "x";
+        expected.option = fixture.jobs;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* Two in one bundle: the letter that comes first. */
+    {
+        char *argv[] = { "tool", "run", "-fxjy", "main.c" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "-fxjy", 2, fixture.run,
+                                   "unknown option '-x'");
+        expected.short_name = 'x';
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * An error on the command line comes before something required that
+     * is missing: SRC of run was not given.
+     */
+    {
+        char *argv[] = { "tool", "run", "-f", "--quiet=1" };
+
+        expected = on_command_line(ARGX_PARSE_ERROR_UNEXPECTED_VALUE, "--quiet=1", 3, fixture.run,
+                                   "option '--quiet' does not take a value");
+        expected.value = "1";
+        expected.option = fixture.quiet;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(of_several_missing_things_the_first_of_the_nearest_command_is_reported)
+{
+    required_fixture_t fixture;
+    expected_t expected;
+
+    set_up_required(&fixture);
+
+    /*
+     * Everything is missing: the option of the root comes first, although
+     * it was added last.
+     */
+    {
+        char *argv[] = { "tool", "push" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, fixture.root,
+                                    "missing required option '--token'");
+        expected.option = fixture.token;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /*
+     * In one command, the options come before the positionals, although
+     * REMOTE was added first; of the options, the one added first.
+     */
+    {
+        char *argv[] = { "tool", "-tsecret", "push" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, fixture.push,
+                                    "missing required option '--branch'");
+        expected.option = fixture.branch;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    {
+        char *argv[] = { "tool", "-tsecret", "push", "-bmain" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, fixture.push,
+                                    "missing required option '-a'");
+        expected.option = fixture.area;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    {
+        char *argv[] = { "tool", "-tsecret", "push", "-bmain", "-ax" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_POSITIONAL, ARGX_SOURCE_NONE, fixture.push,
+                                    "missing required argument 'REMOTE'");
+        expected.positional = fixture.remote;
+        expect_error(fixture.root, ARGC(argv), argv, &expected);
+    }
+    /* Nothing is missing any more. */
+    {
+        char *argv[] = { "tool", "-tsecret", "push", "-bmain", "-ax", "origin" };
+
+        argx_result_destroy(parse_ok(fixture.root, ARGC(argv), argv));
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(a_missing_subcommand_is_reported_after_everything_else_that_is_missing)
+{
+    argx_command_t *root = create_root("tool");
+    argx_option_t *token = add_required(root, 't', "token", argx_type_string());
+    argx_command_t *remote = add_subcommand(root, "remote");
+    argx_option_t *url = add_required(remote, 'u', "url", argx_type_string());
+    expected_t expected;
+
+    (void)add_subcommand(remote, "add");
+    validate(root);
+
+    /* A required option of a command nearer the root comes first. */
+    {
+        char *argv[] = { "tool", "remote" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, root,
+                                    "missing required option '--token'");
+        expected.option = token;
+        expect_error(root, ARGC(argv), argv, &expected);
+    }
+    /* So does a required option of the command that misses the subcommand. */
+    {
+        char *argv[] = { "tool", "-tsecret", "remote" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, remote,
+                                    "missing required option '--url'");
+        expected.option = url;
+        expect_error(root, ARGC(argv), argv, &expected);
+    }
+    /* With nothing else missing, the subcommand is reported. */
+    {
+        char *argv[] = { "tool", "-tsecret", "remote", "-uhttp://example.com" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_SUBCOMMAND, ARGX_SOURCE_NONE, remote,
+                                    "missing required command");
+        expect_error(root, ARGC(argv), argv, &expected);
+    }
+    /* Also in the root, after its own required option. */
+    {
+        char *argv[] = { "tool" };
+
+        expected = off_command_line(ARGX_PARSE_ERROR_MISSING_OPTION, ARGX_SOURCE_NONE, root,
+                                    "missing required option '--token'");
+        expected.option = token;
+        expect_error(root, ARGC(argv), argv, &expected);
+    }
+
+    destroy_root(root);
+}
+
+/* ---- The result of a command line with a parse error --------------------- */
+
+NAOS_TEST(a_result_with_a_parse_error_holds_what_was_read_before_the_error)
+{
+    fixture_t fixture;
+    char *argv[] = { "tool", "-v", "-dd", "--no-color", "-n", "5", "run", "-f", "--cache",
+                     "main.c", "-qq", "--jobs=3", "7", "--bogus", "--quiet", "--name=late" };
+    expected_t expected;
+    argx_result_t *result;
+    const char *text = NULL;
+    int64_t number = 0;
+
+    set_up(&fixture);
+    expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "--bogus", 13, fixture.run,
+                               "unknown option '--bogus'");
+    result = parse_error(fixture.root, ARGC(argv), argv, &expected);
+
+    /* The selected commands. */
+    NAOS_REQUIRE_TRUE(argx_result_command_count(result) == 2);
+    NAOS_CHECK_TRUE(argx_result_command_at(result, 0) == fixture.root);
+    NAOS_CHECK_TRUE(argx_result_command_at(result, 1) == fixture.run);
+    NAOS_CHECK_TRUE(argx_result_command(result) == fixture.run);
+
+    /* The options of the root. */
+    NAOS_CHECK_TRUE(argx_result_flag(result, fixture.verbose));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.verbose), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_UINT_EQ(argx_result_count(result, fixture.debug), 2);
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.debug), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_FALSE(argx_result_flag(result, fixture.color));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.color), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_REQUIRE_TRUE(argx_result_option_int(result, fixture.num, &number));
+    NAOS_CHECK_TRUE(number == 5);
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.num), ARGX_SOURCE_COMMAND_LINE);
+
+    /* The options and the positionals of run, up to the error. */
+    NAOS_CHECK_TRUE(argx_result_flag(result, fixture.force));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.force), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_TRUE(argx_result_flag(result, fixture.cache));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.cache), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_REQUIRE_TRUE(argx_result_option_int(result, fixture.jobs, &number));
+    NAOS_CHECK_TRUE(number == 3);
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.jobs), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_UINT_EQ(argx_result_positional_count(result, fixture.src), 1);
+    NAOS_REQUIRE_TRUE(argx_result_positional_string(result, fixture.src, 0, &text));
+    NAOS_CHECK_STR_EQ(text, "main.c");
+    NAOS_CHECK_INT_EQ(argx_result_positional_source(result, fixture.src), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_REQUIRE_TRUE(argx_result_positional_int(result, fixture.count, 0, &number));
+    NAOS_CHECK_TRUE(number == 7);
+
+    /*
+     * What stands after the error was not read: --quiet was given twice,
+     * and --name not at all.
+     */
+    NAOS_CHECK_UINT_EQ(argx_result_count(result, fixture.quiet), 2);
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.name), ARGX_SOURCE_NONE);
+    NAOS_CHECK_TRUE(argx_result_option_value(result, fixture.name) == NULL);
+
+    argx_result_destroy(result);
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(help_reads_as_given_when_something_required_is_missing)
+{
+    argx_command_t *root = create_root("tool");
+    argx_option_t *help = add_flag(root, 'h', "help");
+    argx_positional_t *file =
+        add_positional(root, "FILE", argx_type_string(), ARGX_ARITY_REQUIRED, NULL);
+    char *argv[] = { "tool", "--help" };
+    expected_t expected;
+    argx_result_t *result;
+
+    validate(root);
+
+    expected = off_command_line(ARGX_PARSE_ERROR_MISSING_POSITIONAL, ARGX_SOURCE_NONE, root,
+                                "missing required argument 'FILE'");
+    expected.positional = file;
+    result = parse_error(root, ARGC(argv), argv, &expected);
+    NAOS_CHECK_TRUE(argx_result_flag(result, help));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, help), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_UINT_EQ(argx_result_positional_count(result, file), 0);
+    argx_result_destroy(result);
+
+    destroy_root(root);
+}
+
+NAOS_TEST(help_reads_as_given_when_a_subcommand_is_missing)
+{
+    argx_command_t *root = create_root("tool");
+    argx_option_t *help = add_flag(root, 'h', "help");
+    char *argv[] = { "tool", "--help" };
+    expected_t expected;
+    argx_result_t *result;
+
+    (void)add_subcommand(root, "run");
+    validate(root);
+
+    expected = off_command_line(ARGX_PARSE_ERROR_MISSING_SUBCOMMAND, ARGX_SOURCE_NONE, root,
+                                "missing required command");
+    result = parse_error(root, ARGC(argv), argv, &expected);
+    NAOS_CHECK_TRUE(argx_result_flag(result, help));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, help), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_TRUE(argx_result_command(result) == root);
+    argx_result_destroy(result);
+
+    destroy_root(root);
+}
+
+NAOS_TEST(help_of_a_subcommand_reads_as_given_when_something_required_is_missing)
+{
+    fixture_t fixture;
+    char *argv[] = { "tool", "run", "--help" };
+    expected_t expected;
+    argx_result_t *result;
+
+    set_up(&fixture);
+
+    expected = off_command_line(ARGX_PARSE_ERROR_MISSING_POSITIONAL, ARGX_SOURCE_NONE, fixture.run,
+                                "missing required argument 'SRC'");
+    expected.positional = fixture.src;
+    result = parse_error(fixture.root, ARGC(argv), argv, &expected);
+    NAOS_CHECK_TRUE(argx_result_flag(result, fixture.help));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture.help), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_TRUE(argx_result_command(result) == fixture.run);
+    argx_result_destroy(result);
+
+    destroy_root(fixture.root);
+}
+
+/*
+ * Checks what was not given on a command line that selected tool and run
+ * and has a parse error.
+ */
+static void check_nothing_was_applied(const argx_result_t *result, const fixture_t *fixture)
+{
+    const char *text = "untouched";
+    int64_t number = 77;
+
+    /* No default value: an option with one reads as one without. */
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->output), ARGX_SOURCE_NONE);
+    NAOS_CHECK_FALSE(argx_result_option_string(result, fixture->output, &text));
+    NAOS_CHECK_STR_EQ(text, "untouched");
+    NAOS_CHECK_TRUE(argx_result_option_value(result, fixture->output) == NULL);
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->name), ARGX_SOURCE_NONE);
+    NAOS_CHECK_FALSE(argx_result_option_string(result, fixture->name, &text));
+    NAOS_CHECK_STR_EQ(text, "untouched");
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->num), ARGX_SOURCE_NONE);
+    NAOS_CHECK_FALSE(argx_result_option_int(result, fixture->num, &number));
+    NAOS_CHECK_TRUE(number == 77);
+    NAOS_CHECK_INT_EQ(argx_result_positional_source(result, fixture->count), ARGX_SOURCE_NONE);
+    NAOS_CHECK_UINT_EQ(argx_result_positional_count(result, fixture->count), 0);
+
+    /* The options that take no value read as their initial values. */
+    NAOS_CHECK_FALSE(argx_result_flag(result, fixture->verbose));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->verbose), ARGX_SOURCE_DEFAULT);
+    NAOS_CHECK_UINT_EQ(argx_result_count(result, fixture->debug), 0);
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->debug), ARGX_SOURCE_DEFAULT);
+    NAOS_CHECK_TRUE(argx_result_flag(result, fixture->color));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->color), ARGX_SOURCE_DEFAULT);
+    NAOS_CHECK_FALSE(argx_result_flag(result, fixture->force));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->force), ARGX_SOURCE_DEFAULT);
+    NAOS_CHECK_UINT_EQ(argx_result_count(result, fixture->quiet), 0);
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->quiet), ARGX_SOURCE_DEFAULT);
+    NAOS_CHECK_FALSE(argx_result_flag(result, fixture->cache));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->cache), ARGX_SOURCE_DEFAULT);
+
+    /*
+     * A command that was not selected has nothing, as in a result without
+     * a parse error.
+     */
+    NAOS_CHECK_FALSE(argx_result_flag(result, fixture->all));
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, fixture->all), ARGX_SOURCE_NONE);
+    NAOS_CHECK_UINT_EQ(argx_result_positional_count(result, fixture->remote_name), 0);
+}
+
+NAOS_TEST(a_result_with_a_parse_error_has_no_default_value_and_the_initial_values)
+{
+    fixture_t fixture;
+    char *scan[] = { "tool", "run", "main.c", "--bogus", "-v" };
+    char *missing[] = { "tool", "run" };
+    expected_t expected;
+    argx_result_t *result;
+
+    set_up(&fixture);
+
+    /* An error of the scan. */
+    expected = on_command_line(ARGX_PARSE_ERROR_UNKNOWN_OPTION, "--bogus", 3, fixture.run,
+                               "unknown option '--bogus'");
+    result = parse_error(fixture.root, ARGC(scan), scan, &expected);
+    check_nothing_was_applied(result, &fixture);
+    NAOS_CHECK_INT_EQ(argx_result_positional_source(result, fixture.src), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_CHECK_UINT_EQ(argx_result_positional_count(result, fixture.src), 1);
+    argx_result_destroy(result);
+
+    /* Something required is missing. */
+    expected = off_command_line(ARGX_PARSE_ERROR_MISSING_POSITIONAL, ARGX_SOURCE_NONE, fixture.run,
+                                "missing required argument 'SRC'");
+    expected.positional = fixture.src;
+    result = parse_error(fixture.root, ARGC(missing), missing, &expected);
+    check_nothing_was_applied(result, &fixture);
+    NAOS_CHECK_INT_EQ(argx_result_positional_source(result, fixture.src), ARGX_SOURCE_NONE);
+    NAOS_CHECK_UINT_EQ(argx_result_positional_count(result, fixture.src), 0);
+    argx_result_destroy(result);
+
+    destroy_root(fixture.root);
+}
+
+/* ---- A result without a parse error -------------------------------------- */
+
+NAOS_TEST(a_result_without_a_parse_error_reads_as_no_error)
+{
+    fixture_t fixture;
+    char *given[] = { "tool", "-v", "-n", "5", "run", "-fj2", "main.c", "3" };
+    char *nothing[] = { "tool" };
+    argx_result_t *results[3];
+    size_t index;
+
+    set_up(&fixture);
+    /* "tool" alone ends in the root. */
+    make_subcommand_optional(fixture.root);
+    validate(fixture.root);
+    results[0] = parse_ok(fixture.root, ARGC(given), given);
+    results[1] = parse_ok(fixture.root, ARGC(nothing), nothing);
+    results[2] = parse_ok(fixture.root, 0, NULL);
+
+    for (index = 0; index < (sizeof(results) / sizeof(results[0])); index++)
+    {
+        const argx_result_t *result = results[index];
+
+        NAOS_CHECK_INT_EQ(argx_result_error(result), ARGX_ERROR_NONE);
+        NAOS_CHECK_INT_EQ(argx_result_error_kind(result), ARGX_PARSE_ERROR_NONE);
+        NAOS_CHECK_TRUE(argx_result_error_message(result) == NULL);
+        NAOS_CHECK_TRUE(argx_result_error_argument(result) == NULL);
+        NAOS_CHECK_TRUE(argx_result_error_value(result) == NULL);
+        NAOS_CHECK_INT_EQ(argx_result_error_source(result), ARGX_SOURCE_NONE);
+        NAOS_CHECK_UINT_EQ(argx_result_error_index(result), 0);
+        NAOS_CHECK_TRUE(argx_result_error_command(result) == NULL);
+        NAOS_CHECK_TRUE(argx_result_error_option(result) == NULL);
+        NAOS_CHECK_TRUE(argx_result_error_positional(result) == NULL);
+        NAOS_CHECK_INT_EQ(argx_result_error_short_name(result), '\0');
+        argx_result_destroy(results[index]);
+    }
+
+    destroy_root(fixture.root);
+}
+
+NAOS_TEST(destroying_no_result_does_nothing)
+{
+    argx_test_allocator_install();
+    argx_result_destroy(NULL);
+    NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), 0);
+    argx_test_allocator_uninstall();
+    check_clean();
+}
+
+/* ---- The strings of an error --------------------------------------------- */
+
+NAOS_TEST(the_strings_of_an_error_stay_valid_after_argv_was_overwritten)
+{
+    fixture_t fixture;
+    char program[] = "tool";
+    char command[] = "run";
+    char source[] = "main.c";
+    char jobs[] = "--jobs=abc";
+    char extra[] = "extra";
+    char *argv[5];
+    expected_t expected;
+    argx_result_t *result;
+    size_t index;
+
+    set_up(&fixture);
+
+    /* The value is a part of the argument. */
+    argv[0] = program;
+    argv[1] = command;
+    argv[2] = source;
+    argv[3] = jobs;
+    argv[4] = extra;
+    expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "--jobs=abc", 3, fixture.run,
+                               "invalid value 'abc' for option '--jobs' (expected integer)");
+    expected.value = "abc";
+    expected.option = fixture.jobs;
+    result = parse_error(fixture.root, ARGC(argv), argv, &expected);
+
+    memset(program, '#', sizeof(program) - 1);
+    memset(command, '#', sizeof(command) - 1);
+    memset(source, '#', sizeof(source) - 1);
+    memset(jobs, '#', sizeof(jobs) - 1);
+    memset(extra, '#', sizeof(extra) - 1);
+    for (index = 0; index < (sizeof(argv) / sizeof(argv[0])); index++)
+    {
+        argv[index] = NULL;
+    }
+    check_error(result, &expected);
+    argx_result_destroy(result);
+
+    /* The value is the argument, the next one of its option. */
+    memcpy(program, "tool", sizeof(program));
+    memcpy(command, "run", sizeof(command));
+    memcpy(jobs, "-fqj", sizeof("-fqj"));
+    memcpy(extra, "extra", sizeof(extra));
+    argv[0] = program;
+    argv[1] = command;
+    argv[2] = jobs;
+    argv[3] = extra;
+    expected = on_command_line(ARGX_PARSE_ERROR_INVALID_VALUE, "extra", 3, fixture.run,
+                               "invalid value 'extra' for option '-j' (expected integer)");
+    expected.value = "extra";
+    expected.option = fixture.jobs;
+    expected.short_name = 'j';
+    result = parse_error(fixture.root, 4, argv, &expected);
+
+    memset(jobs, '#', sizeof(jobs) - 1);
+    memset(extra, '#', sizeof(extra) - 1);
+    argv[2] = NULL;
+    argv[3] = NULL;
+    check_error(result, &expected);
+    argx_result_destroy(result);
+
+    destroy_root(fixture.root);
+}
+
+NAOS_SUITE(scan_errors,
+    NAOS_ADD_TEST(an_unknown_option_has_its_argument_and_no_value),
+    NAOS_ADD_TEST(an_unknown_subcommand_has_its_argument_as_its_value),
+    NAOS_ADD_TEST(a_missing_value_has_the_argument_of_the_option_and_the_option),
+    NAOS_ADD_TEST(an_unexpected_value_has_what_follows_the_equals_sign_and_the_option),
+    NAOS_ADD_TEST(an_invalid_value_of_an_option_has_the_argument_that_holds_the_value),
+    NAOS_ADD_TEST(an_invalid_value_of_a_positional_has_the_positional),
+    NAOS_ADD_TEST(an_unexpected_positional_has_its_argument_as_its_value)
+)
+
+NAOS_SUITE(resolve_errors,
+    NAOS_ADD_TEST(a_missing_option_has_no_position_and_the_option),
+    NAOS_ADD_TEST(a_missing_positional_has_no_position_and_the_positional),
+    NAOS_ADD_TEST(a_missing_subcommand_has_no_position_and_the_command_that_misses_it),
+    NAOS_ADD_TEST(an_optional_subcommand_may_be_left_out_of_its_command_only),
+    NAOS_ADD_TEST(an_invalid_default_value_has_the_default_as_its_value_and_no_argument)
+)
+
+NAOS_SUITE(first_error,
+    NAOS_ADD_TEST(of_two_errors_the_one_that_is_earlier_on_the_command_line_is_reported),
+    NAOS_ADD_TEST(of_several_missing_things_the_first_of_the_nearest_command_is_reported),
+    NAOS_ADD_TEST(a_missing_subcommand_is_reported_after_everything_else_that_is_missing)
+)
+
+NAOS_SUITE(failed_results,
+    NAOS_ADD_TEST(a_result_with_a_parse_error_holds_what_was_read_before_the_error),
+    NAOS_ADD_TEST(help_reads_as_given_when_something_required_is_missing),
+    NAOS_ADD_TEST(help_reads_as_given_when_a_subcommand_is_missing),
+    NAOS_ADD_TEST(help_of_a_subcommand_reads_as_given_when_something_required_is_missing),
+    NAOS_ADD_TEST(a_result_with_a_parse_error_has_no_default_value_and_the_initial_values)
+)
+
+NAOS_SUITE(no_error,
+    NAOS_ADD_TEST(a_result_without_a_parse_error_reads_as_no_error),
+    NAOS_ADD_TEST(destroying_no_result_does_nothing)
+)
+
+NAOS_SUITE(strings,
+    NAOS_ADD_TEST(the_strings_of_an_error_stay_valid_after_argv_was_overwritten)
+)
+
+NAOS_MAIN(
+    NAOS_ADD_SUITE(scan_errors),
+    NAOS_ADD_SUITE(resolve_errors),
+    NAOS_ADD_SUITE(first_error),
+    NAOS_ADD_SUITE(failed_results),
+    NAOS_ADD_SUITE(no_error),
+    NAOS_ADD_SUITE(strings)
+)
