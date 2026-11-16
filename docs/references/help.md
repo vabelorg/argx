@@ -7,7 +7,7 @@ API reference of `include/argx/help.h`. The library generates the help of a comm
 | Functions | Section |
 | --- | --- |
 | `argx_help_write`, `argx_help_write_usage`, `argx_help_format`, `argx_help_format_usage` | [Generating functions](#generating-functions) |
-| `argx_help_options_create`, `argx_help_options_destroy`, `argx_help_options_set_width`, `argx_help_options_set_indent`, `argx_help_options_set_max_column` | [Help options](#help-options) |
+| `argx_help_options_create`, `argx_help_options_destroy`, `argx_help_options_set_width`, `argx_help_options_set_indent`, `argx_help_options_set_max_column`, `argx_help_options_set_measure` | [Help options](#help-options) |
 
 ## Generating functions
 
@@ -46,14 +46,16 @@ argx_error_t argx_help_format_usage(const argx_command_t *command,
 | Set the width | `argx_help_options_set_width` | Cannot fail |
 | Set the indent | `argx_help_options_set_indent` | Cannot fail |
 | Set the maximum description column | `argx_help_options_set_max_column` | Cannot fail |
+| Set the measure function | `argx_help_options_set_measure` | Cannot fail. `NULL` restores the default |
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
 | Width | The line width wrapping aims at; 0 for no wrapping. The only setting the usage line uses | 80 |
 | Indent | Blanks before each list item | 2 |
 | Maximum description column | The upper limit of the [description column](help-layout.md#description-column) | 32 |
+| Measure function | How many columns a text takes on the display ([Measure function](#measure-function)). The other settings are counted in its columns | None: one byte is one column |
 
-- Values above 65535 are treated as 65535.
+- Values above 65535 are treated as 65535. The measure function is not a value and is stored as given.
 - One object may serve any number of generations, concurrently while nobody changes it.
 - The library never reads the terminal width; set it yourself.
 - Later versions may add settings.
@@ -98,6 +100,29 @@ Options:
                     The compression
                     level. [default: 6]
 ```
+
+### Measure function
+
+```
+typedef size_t (*argx_help_measure_fn_t)(void *user_data, const char *text, size_t length);
+```
+
+Without a measure function, one byte is one column. Non-ASCII text then wraps early and widens the description column, but no line goes beyond the width. With one, every width of the help is measured with it: the usage line items, the headings and so the description column, and the words of descriptions and annotations. ArgX keeps no data about characters; the function knows the display ([How-to](../guides/how-to.md#measuring-the-display-width-of-the-help)).
+
+What ArgX passes:
+
+- `text` is `length` bytes that the help writes unchanged, **not null-terminated**, possibly invalid UTF-8. `length` is at least 1.
+- `text` never holds `\n`. ArgX cuts text only before or after an ASCII byte: at the blanks and newlines of schema strings, and around what it adds itself (`Usage: `, `<`, `>`, `, `, `[default: ` and so on). A UTF-8 sequence is never cut.
+- `text` may hold blanks, such as those of `Usage: `. The blanks of the indent, of padding and between wrapped words count one column each and are not passed.
+- The same text may be measured more than once in one generation. ArgX adds up the results; a sum stops at the largest `size_t` instead of wrapping around.
+- `user_data` is passed through unchanged. ArgX borrows it: keep it valid while the help options are used.
+
+What the function must do:
+
+- Return the same width for the same text. Otherwise the layout is not guaranteed, though the generation still succeeds.
+- Be thread-safe when help options are shared by threads.
+- Never fail: give some width, such as 1 per byte, to what it cannot measure.
+- Not change the schema or the help options.
 
 ## Output
 
@@ -167,6 +192,7 @@ To get the whole text, call with `size` 0 for the length, then with `*length + 1
 | Thing | Owner | Valid for |
 | --- | --- | --- |
 | Help options | You | Until destroyed, independently of the schema |
+| `user_data` of the measure function | You | While the help options are used with that function |
 | `text` given to the write function | The library | Only during that call |
 | `buffer` | You | Only during the call |
 | The schema and its value types | You | Unchanged during the call |

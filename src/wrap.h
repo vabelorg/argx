@@ -7,7 +7,9 @@
  *
  * A word is a run of bytes other than the ASCII blank (0x20) and the
  * newline (0x0A). A tab, like every other byte, is part of a word. Widths
- * and columns count bytes, as in "out.h": one byte is one column.
+ * and columns are counted as in "out.h": a word is measured by the
+ * output's measure function (one byte is one column without one), and a
+ * blank is one column. Each word is measured once.
  *
  * The function allocates nothing and knows nothing about a schema.
  */

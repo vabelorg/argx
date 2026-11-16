@@ -99,6 +99,109 @@ if (argx_help_options_create(&options) == ARGX_ERROR_NONE)
 }
 ```
 
+### Measuring the display width of the help
+
+By default one byte is one column, so a help with non-ASCII characters wraps early and its columns are too wide. Give the help options a [measure function](../references/help.md#measure-function) that returns the display width of a text. ArgX keeps no data about characters, so the function decides, for example, how wide an ambiguous-width character is.
+
+With POSIX `wcwidth()`, in a UTF-8 locale (call `setlocale(LC_CTYPE, "")` first). The complete program is [examples/measure/measure.c](../../examples/measure/measure.c):
+
+```c
+#define _XOPEN_SOURCE 700 /* for wcwidth() */
+#include <string.h>
+#include <wchar.h>
+
+static size_t measure_with_wcwidth(void *user_data, const char *text, size_t length)
+{
+    mbstate_t state;
+    size_t total = 0;
+
+    (void)user_data;
+    memset(&state, 0, sizeof state);
+    while (length != 0)
+    {
+        wchar_t wc;
+        size_t n = mbrtowc(&wc, text, length, &state);
+        int w;
+
+        if ((n == (size_t)-1) || (n == (size_t)-2))
+        {
+            /* Invalid or cut short: one column for the byte. */
+            memset(&state, 0, sizeof state);
+            n = 1;
+            w = 1;
+        }
+        else
+        {
+            if (n == 0)
+            {
+                n = 1;
+            }
+            w = wcwidth(wc);
+        }
+        total += (w < 0) ? 1 : (size_t)w;
+        text += n;
+        length -= n;
+    }
+    return total;
+}
+```
+
+```c
+argx_help_options_set_measure(options, measure_with_wcwidth, NULL);
+```
+
+`wcwidth()` is not available on Windows, and on some systems `wchar_t` is UTF-16. A portable choice is [utf8proc](https://github.com/JuliaStrings/utf8proc), which does not depend on the locale:
+
+```c
+#include <utf8proc.h>
+
+static size_t measure_with_utf8proc(void *user_data, const char *text, size_t length)
+{
+    const utf8proc_uint8_t *bytes = (const utf8proc_uint8_t *)text;
+    size_t total = 0;
+
+    (void)user_data;
+    while (length != 0)
+    {
+        utf8proc_int32_t code_point;
+        utf8proc_ssize_t n = utf8proc_iterate(bytes, (utf8proc_ssize_t)length, &code_point);
+
+        if (n < 1)
+        {
+            /* Invalid: one column for the byte. */
+            n = 1;
+            total += 1;
+        }
+        else
+        {
+            total += (size_t)utf8proc_charwidth(code_point);
+        }
+        bytes += n;
+        length -= (size_t)n;
+    }
+    return total;
+}
+```
+
+Both count each character on its own, so an emoji sequence joined with ZWJ, or a flag, counts wider than most terminals show it. To count grapheme clusters, use `utf8proc_grapheme_break_stateful()` in the same loop.
+
+### Writing help text in Chinese or Japanese
+
+ArgX breaks lines only at blanks, so a sentence without blanks is one word and is never broken. Break the lines yourself with `\n`, where they read well. A line after `\n` starts at the column where the description started, and a line that fits the width is never broken again, so set a [measure function](#measuring-the-display-width-of-the-help) too:
+
+```c
+argx_option_set_description(output, "変換した画像を書き込むファイル。\n"
+                                    "省略すると、入力と同じ場所に書き込みます。");
+```
+
+```
+Options:
+  -o, --output <出力>  変換した画像を書き込むファイル。
+                       省略すると、入力と同じ場所に書き込みます。
+```
+
+Keep each line short enough for the narrowest width you expect: the description column plus the line must fit, or the line runs past the width. This is how git and GNU coreutils handle translated help. Translators of a PO file can break the lines the same way.
+
 ### Getting the help as a string
 
 Call [`argx_help_format`](../references/help.md#formatting-into-a-buffer) once for the length and once for the text. Unlike `argx_help_write`, it never leaves partial output.

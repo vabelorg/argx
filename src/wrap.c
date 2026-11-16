@@ -61,14 +61,15 @@ void argx_wrap_write(argx_out_t *out, const char *text, size_t length,
         else
         {
             size_t current;
-            size_t word;
+            size_t word; /* the word's width */
 
             while ((position < length) && (text[position] != ' ') && (text[position] != '\n'))
             {
                 ++position;
             }
 
-            word = position - start;
+            /* The word is measured once, for the test and for the output. */
+            word = argx_out_measure(out, text + start, position - start);
 
             /*
              * Tests "current + word > width" without the sum. The
@@ -83,7 +84,7 @@ void argx_wrap_write(argx_out_t *out, const char *text, size_t length,
                 argx_out_pad_to(out, column);
             }
 
-            argx_out_text(out, text + start, word);
+            argx_out_text_measured(out, text + start, position - start, word);
             line_has_word = true;
         }
     }

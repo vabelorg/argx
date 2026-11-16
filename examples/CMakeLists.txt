@@ -59,3 +59,7 @@ endfunction()
 
 add_subdirectory(greet)
 add_subdirectory(pack)
+# wcwidth() is POSIX: not on Windows.
+if(NOT WIN32)
+    add_subdirectory(measure)
+endif()

@@ -20,12 +20,14 @@
  */
 typedef struct help_context
 {
-    const argx_command_t *command; /* the command the text is about */
-    size_t width;                  /* the width in columns; 0 means no limit */
-    size_t indent;                 /* the blanks before each item of a list */
-    size_t max_column;             /* the last column at which descriptions may start */
-    size_t column;                 /* the description column; set before the lists are written */
-    argx_out_t out;                /* where the text goes */
+    const argx_command_t *command;     /* the command the text is about */
+    size_t width;                      /* the width in columns; 0 means no limit */
+    size_t indent;                     /* the blanks before each item of a list */
+    size_t max_column;                 /* the last column at which descriptions may start */
+    size_t column;                     /* the description column; set before the lists are written */
+    argx_help_measure_fn_t measure_fn; /* measures text; NULL: one byte is one column */
+    void *measure_data;                /* passed to measure_fn */
+    argx_out_t out;                    /* where the text goes */
     /*
      * the cell text of one item, as bytes; reused for the next
      * item and freed before the generation returns
@@ -48,15 +50,20 @@ static void help_context_init(help_context_t *context, const argx_command_t *com
         context->width = options->width;
         context->indent = options->indent;
         context->max_column = options->max_column;
+        context->measure_fn = options->measure_fn;
+        context->measure_data = options->measure_data;
     }
     else
     {
         context->width = ARGX_HELP_DEFAULT_WIDTH;
         context->indent = ARGX_HELP_DEFAULT_INDENT;
         context->max_column = ARGX_HELP_DEFAULT_MAX_COLUMN;
+        context->measure_fn = NULL;
+        context->measure_data = NULL;
     }
     context->column = 0;
     argx_out_init(&context->out, write_fn, user_data);
+    argx_out_set_measure(&context->out, context->measure_fn, context->measure_data);
     argx_vec_init(&context->text, 1);
 }
 
@@ -268,50 +275,33 @@ static size_t help_add(size_t a, size_t b)
 }
 
 /*
- * A write function that keeps nothing: it adds length to the size_t that
- * user_data points to. The sum stops at the greatest size_t value instead
- * of wrapping around.
- */
-static bool help_count_write(void *user_data, const char *text, size_t length)
-{
-    size_t *total = user_data;
-
-    (void)text;
-    *total = help_add(*total, length);
-
-    return true;
-}
-
-/*
- * Starts counter as an output that measures a width. Sets *width to 0;
- * every byte then written to counter adds 1 to it. Nothing is kept and
- * nothing is allocated.
+ * Starts counter as an output that writes nothing and measures text as
+ * context's output does. Nothing is kept and nothing is allocated.
  *
- * The width of a usage line item or a heading is the number of all its
- * bytes, including those before a newline inside a name and the newline
- * itself. The output column would not do, as it restarts at 0 after a
- * newline. No blank is remembered inside an item or a heading, so every
- * byte reaches the count.
+ * The width of a usage line item or a heading is the counter's total
+ * after it is written (argx_out_total()): the width of all its text,
+ * including the part before a newline inside a name, plus 1 for that
+ * newline. The output column would not do, as it restarts at 0 after a
+ * newline.
  */
-static void help_counter_init(argx_out_t *counter, size_t *width)
+static void help_counter_init(const help_context_t *context, argx_out_t *counter)
 {
-    *width = 0;
-    argx_out_init(counter, help_count_write, width);
+    argx_out_init(counter, NULL, NULL);
+    argx_out_set_measure(counter, context->measure_fn, context->measure_data);
 }
 
 /*
- * Returns item's width: the number of all its bytes. The item is written
- * once to an output that only counts; see help_counter_init().
+ * Returns item's width. The item is written once to an output that only
+ * counts; see help_counter_init().
  */
-static size_t help_usage_item_width(const help_usage_item_t *item)
+static size_t help_usage_item_width(const help_context_t *context, const help_usage_item_t *item)
 {
-    size_t width;
     argx_out_t counter;
 
-    help_counter_init(&counter, &width);
+    help_counter_init(context, &counter);
     help_usage_item_write(&counter, item);
 
-    return width;
+    return argx_out_total(&counter);
 }
 
 /*
@@ -330,7 +320,7 @@ static void help_usage_separate(help_context_t *context, const help_usage_item_t
 
     if (context->width != 0)
     {
-        size_t item_width = help_usage_item_width(item);
+        size_t item_width = help_usage_item_width(context, item);
 
         /*
          * "column + 1 + item_width > width", written without a sum that
@@ -484,18 +474,17 @@ static void help_heading_write(argx_out_t *out, const help_heading_t *heading)
 }
 
 /*
- * Returns heading's width: the number of all its bytes. The heading is
- * written once to an output that only counts; see help_counter_init().
+ * Returns heading's width. The heading is written once to an output that
+ * only counts; see help_counter_init().
  */
-static size_t help_heading_width(const help_heading_t *heading)
+static size_t help_heading_width(const help_context_t *context, const help_heading_t *heading)
 {
-    size_t width;
     argx_out_t counter;
 
-    help_counter_init(&counter, &width);
+    help_counter_init(context, &counter);
     help_heading_write(&counter, heading);
 
-    return width;
+    return argx_out_total(&counter);
 }
 
 /* Returns the heading of command's subcommand at index. */
@@ -541,9 +530,9 @@ static help_heading_t help_option_heading(const argx_option_t *option)
  * Returns "indent + width + 2": the first column at which a description
  * can start on the line of a heading of that width.
  *
- * A width is the length of strings in memory and the indent is at most
- * ARGX_HELP_SETTING_MAX, so the sum is not expected to overflow a size_t;
- * help_add() keeps it defined if it ever does.
+ * The indent is at most ARGX_HELP_SETTING_MAX, but a width comes from the
+ * measure function and may be anything; help_add() keeps the sum
+ * defined.
  */
 static size_t help_heading_reach(const help_context_t *context, size_t width)
 {
@@ -576,7 +565,7 @@ static size_t help_description_column(const help_context_t *context)
     for (index = 0; index < count; ++index)
     {
         heading = help_subcommand_heading(command, index);
-        width = help_heading_width(&heading);
+        width = help_heading_width(context, &heading);
         if (width > widest)
         {
             widest = width;
@@ -587,7 +576,7 @@ static size_t help_description_column(const help_context_t *context)
     for (index = 0; index < count; ++index)
     {
         heading = help_positional_heading(command, index);
-        width = help_heading_width(&heading);
+        width = help_heading_width(context, &heading);
         if (width > widest)
         {
             widest = width;
@@ -598,7 +587,7 @@ static size_t help_description_column(const help_context_t *context)
     for (index = 0; index < count; ++index)
     {
         heading = help_option_heading(argx_command_option_at(command, index));
-        width = help_heading_width(&heading);
+        width = help_heading_width(context, &heading);
         if (width > widest)
         {
             widest = width;
@@ -613,7 +602,7 @@ static size_t help_description_column(const help_context_t *context)
         while ((option = help_global_iter_next(&iter)) != NULL)
         {
             heading = help_option_heading(option);
-            width = help_heading_width(&heading);
+            width = help_heading_width(context, &heading);
             if (width > widest)
             {
                 widest = width;
@@ -764,7 +753,7 @@ static void help_write_title(help_context_t *context, const char *title)
  * after the heading, and the description starts on the next line, at the
  * description column.
  *
- * The decision uses the heading width (the number of all its bytes), not
+ * The decision uses the heading width (see help_heading_width()), not
  * the output column after the heading: the two differ for a heading with
  * a newline inside a name.
  */
@@ -777,18 +766,22 @@ static void help_write_item(help_context_t *context, const help_heading_t *headi
     help_heading_write(out, heading);
     if (length != 0)
     {
-        if (help_heading_reach(context, help_heading_width(heading)) > context->column)
-        {
-            argx_out_newline(out);
-        }
-
         /*
          * argx_wrap_write() needs the output to be at or left of the
          * description column. On the heading's line the output is at
          * "indent + heading width" at most (less after a newline inside
          * a name), which is at least 2 left of the column. On a new line
-         * it is at 0.
+         * it is at 0. The second test only matters for a measure function
+         * that returns different widths for the same text: the heading
+         * may then end to the right of where it was measured.
          */
+        if ((help_heading_reach(context, help_heading_width(context, heading)) >
+             context->column) ||
+            (argx_out_column(out) > context->column))
+        {
+            argx_out_newline(out);
+        }
+
         assert(argx_out_column(out) <= context->column);
         argx_wrap_write(out, text, length, context->column, context->width);
     }

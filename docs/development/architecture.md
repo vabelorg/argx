@@ -104,7 +104,7 @@ Internal, with no knowledge of a schema. Each has a test in `tests/internal/`.
 | `utf8.c` | Converting a wide string to UTF-8 (UTF-16 or UTF-32, depending on the width of `wchar_t`) |
 | `lex.c` | Classifying one argument by its shape: plain, long option, short option bundle, or `--` |
 | `message.c` | Building the English message of a parse error |
-| `out.c` | The help output: passes text to a write function and counts columns |
+| `out.c` | The help output: passes text to a write function and counts columns, with the measure function of the help options when one is set |
 | `wrap.c` | Writing one text to an output, broken into lines at blanks |
 
 ### Value types
@@ -138,7 +138,7 @@ A successful validation sets the validated state in the root. A change to the tr
 | --- | --- |
 | `help.c` | The public functions that write the help and the usage line, and the order of the parts |
 | `help_item.c` | How one option or positional is written: its heading, its usage item and its notes |
-| `help_options.c` | The layout settings: width, indent and maximum column |
+| `help_options.c` | The layout settings: width, indent, maximum column and measure function |
 
 ## Parsing an argv
 
@@ -212,7 +212,7 @@ sequenceDiagram
 
 1. `help.c` walks one command of the schema and decides the order: the usage line, the description, then the commands, arguments and options sections.
 2. `help_item.c` writes each heading and usage item, and adds the notes such as `[default: VALUE]` after a description. To measure an item, `help.c` writes it once to an output that only counts bytes, so measuring and writing use the same code.
-3. Every byte goes through an output (`out.c`), which tracks the column. Descriptions are wrapped by `wrap.c`.
+3. Every byte goes through an output (`out.c`), which tracks the column. It is the only caller of the measure function; the widths of usage line items and headings come from an output that writes nothing. Descriptions are wrapped by `wrap.c`, which measures each word once.
 4. The write function is the caller's. `argx_help_format()` and `argx_help_format_usage()` pass a write function that copies the text into the caller's buffer and counts its whole length.
 
 The rules of the text itself are in [Help Text Layout](../references/help-layout.md).

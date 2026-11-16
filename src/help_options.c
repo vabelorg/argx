@@ -36,6 +36,8 @@ argx_error_t argx_help_options_create(argx_help_options_t **out)
     options->width = ARGX_HELP_DEFAULT_WIDTH;
     options->indent = ARGX_HELP_DEFAULT_INDENT;
     options->max_column = ARGX_HELP_DEFAULT_MAX_COLUMN;
+    options->measure_fn = NULL;
+    options->measure_data = NULL;
 
     *out = options;
     return ARGX_ERROR_NONE;
@@ -65,4 +67,13 @@ void argx_help_options_set_max_column(argx_help_options_t *options, size_t colum
     assert(options != NULL);
 
     options->max_column = clamp_setting(column);
+}
+
+void argx_help_options_set_measure(argx_help_options_t *options,
+                                   argx_help_measure_fn_t measure_fn, void *user_data)
+{
+    assert(options != NULL);
+
+    options->measure_fn = measure_fn;
+    options->measure_data = (measure_fn != NULL) ? user_data : NULL;
 }
