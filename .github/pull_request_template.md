@@ -13,4 +13,5 @@
 - [ ] I added or updated tests for the change, or explained below why none are needed.
 - [ ] I updated the documentation for any change in behavior or API.
 - [ ] I added an entry under `Unreleased` in [CHANGELOG.md](https://github.com/vabelorg/argx/blob/main/CHANGELOG.md) for any change visible to users.
+- [ ] A breaking change (see [docs/references/version.md](https://github.com/vabelorg/argx/blob/main/docs/references/version.md#what-counts-as-a-breaking-change)) starts with `**BREAKING**:` in CHANGELOG.md.
 - [ ] Documentation and code comments are in English.

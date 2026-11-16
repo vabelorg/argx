@@ -89,6 +89,38 @@
 # Stops with a FATAL_ERROR when <repo-url> is empty, the text is not valid or
 # it has no section for <version>.
 #
+#   argx_changelog_check_version(<text> <version> <base> <prefix>)
+#
+# Checks that the entries under [Unreleased] are written as the release needs
+# them and allow <version>, the version to release, after <base>, the highest
+# release that is not a pre-release ("" when there is none). A pre-release is
+# checked as the version it leads to: 0.2.0-rc.1 as 0.2.0. A breaking change
+# is an entry that starts with "**BREAKING**: " (see docs/development/
+# releasing.md#keeping-the-changelog). Sets, in the scope of the caller:
+#
+#   <prefix>_VALID     TRUE or FALSE.
+#   <prefix>_ERROR     "" when valid; otherwise English sentences, which start
+#                      with "line <n>: " when the problem is the form of an
+#                      entry.
+#   <prefix>_KIND      "major", "minor" or "patch" when <version> raises that
+#                      part of <base>; "first" when <base> is "".
+#   <prefix>_BREAKING  The number of **BREAKING** entries under [Unreleased].
+#
+# The first problem found is reported, in this order:
+#
+#   1. Every entry is under a category heading.
+#   2. No entry starts with a marker close to "**BREAKING**: " but not equal
+#      to it, such as "**Breaking**:" or "BREAKING:".
+#   3. A **BREAKING** entry is under Changed or Removed.
+#   4. Every category heading has at least one entry.
+#   5. Unless <base> is "": a patch release has Fixed and Security entries
+#      only (no **BREAKING** entry, then); from 1.0 on (<base> 1.0.0 or
+#      higher), a **BREAKING** entry needs a major release. The error names
+#      the entry and the lowest version that would be allowed.
+#
+# Stops with a FATAL_ERROR when <version> is not valid, <base> is not valid or
+# is a pre-release, or the text is not valid.
+#
 # Every FATAL_ERROR starts with "error: " and holds the reason in English.
 
 include_guard(GLOBAL)
@@ -159,6 +191,23 @@ function(_argx_changelog_trim lines first_var last_var)
     set(${last_var} ${last} PARENT_SCOPE)
 endfunction()
 
+# Sets <out-var> to the mark of the entry <line>: "breaking" when it starts
+# with the marker "**BREAKING**: ", "malformed" when it starts with something
+# close to it ("**Breaking**:", "**BREAKING:**", "BREAKING:", "__BREAKING__"),
+# "none" otherwise. An entry such as "- Breaking up long lines ..." is "none":
+# without emphasis, only "breaking" followed by a colon is close to the marker.
+function(_argx_changelog_mark line out_var)
+    string(TOLOWER "${line}" lower)
+    if(line MATCHES "^[-*] \\*\\*BREAKING\\*\\*: ")
+        set(mark breaking)
+    elseif(lower MATCHES "^[-*] [*_]*breaking[*_]*:" OR lower MATCHES "^[-*] [*_]+breaking")
+        set(mark malformed)
+    else()
+        set(mark none)
+    endif()
+    set(${out_var} ${mark} PARENT_SCOPE)
+endfunction()
+
 # Checks the text and sets, besides the variables of argx_changelog_parse
 # (which are set whether or not the text is valid):
 #
@@ -171,6 +220,15 @@ endfunction()
 #   <prefix>_VERSION_LINES         The index of the heading of each version.
 #   <prefix>_LINKS_LINE            The index of the first link definition.
 #   <prefix>_UNRELEASED_LINK_LINE  The index of the "[Unreleased]: " line.
+#   <prefix>_ENTRY_NUMBERS         The line number (from 1) of each entry
+#                                  under [Unreleased].
+#   <prefix>_ENTRY_CATEGORIES      The category of each of these entries, or
+#                                  "-" for an entry above every category
+#                                  heading.
+#   <prefix>_ENTRY_MARKS           The mark of each of these entries, as
+#                                  _argx_changelog_mark() sets it.
+#   <prefix>_EMPTY_HEADINGS        The line numbers of the category headings
+#                                  under [Unreleased] with no entry.
 function(_argx_changelog_scan text prefix)
     _argx_changelog_codes()
     set(problem "")
@@ -205,6 +263,14 @@ function(_argx_changelog_scan text prefix)
     set(unreleased_link_line -1)
     set(unreleased_links 0)
     set(categories Added Changed Deprecated Removed Fixed Security)
+    # The entries of [Unreleased], as three lists of the same length, and the
+    # category headings under it that have no entry.
+    set(category "")
+    set(entry_numbers "")
+    set(entry_categories "")
+    set(entry_marks "")
+    set(empty_headings "")
+    set(pending_heading "")
 
     if(problem STREQUAL "" AND count EQUAL 0)
         set(problem "line 1: the first line must be \"# Changelog\".")
@@ -225,6 +291,13 @@ function(_argx_changelog_scan text prefix)
             set(is_unreleased_link FALSE)
             if(line MATCHES "^\\[Unreleased\\]: ")
                 set(is_unreleased_link TRUE)
+            endif()
+            # A category heading of [Unreleased] ends at the next "### " or
+            # "## " heading, or at the first link definition.
+            if(state STREQUAL "unreleased" AND NOT pending_heading STREQUAL ""
+                    AND (is_link OR line MATCHES "^##"))
+                list(APPEND empty_headings ${pending_heading})
+                set(pending_heading "")
             endif()
 
             if(state STREQUAL "title")
@@ -296,14 +369,28 @@ ${above}, the version above it; versions must be listed newest first.")
                     if(NOT category IN_LIST categories)
                         set(problem "${where}\"${line}\" is not a category of Keep a Changelog \
 (Added, Changed, Deprecated, Removed, Fixed, Security).")
+                    elseif(state STREQUAL "unreleased")
+                        set(pending_heading ${number})
                     endif()
                 endif()
             elseif(line MATCHES "^[-*] ")
                 if(state STREQUAL "unreleased")
                     math(EXPR entries "${entries} + 1")
+                    set(pending_heading "")
+                    _argx_changelog_mark("${line}" mark)
+                    list(APPEND entry_numbers ${number})
+                    if(category STREQUAL "")
+                        list(APPEND entry_categories "-")
+                    else()
+                        list(APPEND entry_categories "${category}")
+                    endif()
+                    list(APPEND entry_marks ${mark})
                 endif()
             endif()
         endforeach()
+        if(state STREQUAL "unreleased" AND NOT pending_heading STREQUAL "")
+            list(APPEND empty_headings ${pending_heading})
+        endif()
     endif()
 
     if(problem STREQUAL "")
@@ -333,6 +420,10 @@ there are ${unreleased_links}.")
     set(${prefix}_VERSION_LINES "${version_lines}" PARENT_SCOPE)
     set(${prefix}_LINKS_LINE ${links_line} PARENT_SCOPE)
     set(${prefix}_UNRELEASED_LINK_LINE ${unreleased_link_line} PARENT_SCOPE)
+    set(${prefix}_ENTRY_NUMBERS "${entry_numbers}" PARENT_SCOPE)
+    set(${prefix}_ENTRY_CATEGORIES "${entry_categories}" PARENT_SCOPE)
+    set(${prefix}_ENTRY_MARKS "${entry_marks}" PARENT_SCOPE)
+    set(${prefix}_EMPTY_HEADINGS "${empty_headings}" PARENT_SCOPE)
 endfunction()
 
 # Drops a slash at the end of the URL in <var>; stops when the URL is empty.
@@ -501,6 +592,131 @@ ${version}.")
     endif()
 
     set(${out_var} "${notes}" PARENT_SCOPE)
+endfunction()
+
+function(argx_changelog_check_version text version base prefix)
+    set(what "cannot check the version ${version} against the changelog")
+    argx_semver_parse("${version}" v)
+    if(NOT v_VALID)
+        message(FATAL_ERROR "error: ${what}: ${v_ERROR}")
+    endif()
+    if(NOT base STREQUAL "")
+        argx_semver_parse("${base}" b)
+        if(NOT b_VALID)
+            message(FATAL_ERROR "error: ${what}: the earlier release: ${b_ERROR}")
+        endif()
+        if(NOT b_PRERELEASE STREQUAL "")
+            message(FATAL_ERROR "error: ${what}: the earlier release ${base} is a pre-release.")
+        endif()
+    endif()
+    _argx_changelog_scan("${text}" scan)
+    if(NOT scan_VALID)
+        message(FATAL_ERROR "error: ${what}: the changelog is not valid: ${scan_ERROR}")
+    endif()
+
+    # The kind of release, from the version that a pre-release leads to.
+    if(base STREQUAL "")
+        set(kind first)
+    elseif(NOT v_MAJOR EQUAL b_MAJOR)
+        set(kind major)
+    elseif(NOT v_MINOR EQUAL b_MINOR)
+        set(kind minor)
+    else()
+        set(kind patch)
+    endif()
+
+    set(problem "")
+    set(breaking 0)
+    set(numbers "${scan_ENTRY_NUMBERS}")
+    set(entry_categories "${scan_ENTRY_CATEGORIES}")
+    set(marks "${scan_ENTRY_MARKS}")
+    list(LENGTH numbers count)
+
+    # The form of the entries, whatever the version.
+    if(count GREATER 0)
+        math(EXPR last "${count} - 1")
+        foreach(index RANGE ${last})
+            list(GET numbers ${index} number)
+            list(GET entry_categories ${index} category)
+            list(GET marks ${index} mark)
+            if(mark STREQUAL "breaking")
+                math(EXPR breaking "${breaking} + 1")
+            endif()
+            if(NOT problem STREQUAL "")
+                continue()
+            endif()
+            if(category STREQUAL "-")
+                set(problem "line ${number}: the entry is under no category heading. Put it \
+under the category of the change: Added, Changed, Deprecated, Removed, Fixed or Security.")
+            elseif(mark STREQUAL "malformed")
+                set(problem "line ${number}: the entry starts with a marker close to \
+\"**BREAKING**: \". Write the marker of a breaking change as \"**BREAKING**: \", in capitals \
+with the colon after the asterisks.")
+            elseif(mark STREQUAL "breaking" AND NOT category MATCHES "^(Changed|Removed)$")
+                set(problem "line ${number}: the **BREAKING** entry is under ${category}. \
+A breaking change goes under Changed or Removed.")
+            endif()
+        endforeach()
+    endif()
+    if(problem STREQUAL "" AND NOT scan_EMPTY_HEADINGS STREQUAL "")
+        list(GET scan_EMPTY_HEADINGS 0 number)
+        set(problem "line ${number}: the category heading has no entry under it. Remove the \
+heading, or add the entries.")
+    endif()
+
+    # The version against the entries. The entry that needs the highest kind
+    # of release, the first one of them, is named.
+    if(problem STREQUAL "" AND NOT kind STREQUAL "first" AND count GREATER 0)
+        set(ranks patch minor major)
+        list(FIND ranks ${kind} have)
+        set(need 0)
+        set(need_index -1)
+        foreach(index RANGE ${last})
+            list(GET entry_categories ${index} category)
+            list(GET marks ${index} mark)
+            if(mark STREQUAL "breaking" AND b_MAJOR GREATER 0)
+                set(rank 2)
+            elseif(mark STREQUAL "breaking" OR NOT category MATCHES "^(Fixed|Security)$")
+                set(rank 1)
+            else()
+                set(rank 0)
+            endif()
+            if(rank GREATER need)
+                set(need ${rank})
+                set(need_index ${index})
+            endif()
+        endforeach()
+        if(need GREATER have)
+            list(GET numbers ${need_index} number)
+            list(GET entry_categories ${need_index} category)
+            list(GET marks ${need_index} mark)
+            if(need EQUAL 2)
+                math(EXPR next_major "${b_MAJOR} + 1")
+                set(lowest "${next_major}.0.0")
+                set(reason "a **BREAKING** entry, which needs a major release from 1.0 on")
+            else()
+                math(EXPR next_minor "${b_MINOR} + 1")
+                set(lowest "${b_MAJOR}.${next_minor}.0")
+                if(mark STREQUAL "breaking")
+                    set(reason "a **BREAKING** entry, which needs at least a minor release")
+                else()
+                    set(reason "an entry under ${category}, which needs at least a minor \
+release; a patch release may have Fixed and Security entries only")
+                endif()
+            endif()
+            set(problem "the version ${version} is a ${kind} release after ${base}, but \
+line ${number} is ${reason}. Release ${lowest} or higher.")
+        endif()
+    endif()
+
+    if(problem STREQUAL "")
+        set(${prefix}_VALID TRUE PARENT_SCOPE)
+    else()
+        set(${prefix}_VALID FALSE PARENT_SCOPE)
+    endif()
+    set(${prefix}_ERROR "${problem}" PARENT_SCOPE)
+    set(${prefix}_KIND ${kind} PARENT_SCOPE)
+    set(${prefix}_BREAKING ${breaking} PARENT_SCOPE)
 endfunction()
 
 cmake_policy(POP)

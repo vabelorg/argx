@@ -28,6 +28,9 @@
 #                                version=<version>
 #                                tag=v<version>
 #                                prerelease=<true|false>
+#                                breaking=<true|false>
+#                            where breaking is true when [Unreleased] has a
+#                            **BREAKING** entry.
 #   ARGX_RELEASE_CHECK_ONLY  Optional. When true, runs every check and
 #                            prepares the new files, but writes nothing: not
 #                            the two files and not the output file.
@@ -49,6 +52,16 @@
 #      first release; once it has one, check 3 or 4 has stopped the script.
 #   6. The changelog is valid for ArgXChangelog.cmake, does not list the
 #      version yet and has at least one entry under [Unreleased].
+#   7. The entries under [Unreleased] are under category headings, mark a
+#      breaking change as "**BREAKING**: " under Changed or Removed, and allow
+#      the version (argx_changelog_check_version() in ArgXChangelog.cmake).
+#      The version, or the version a pre-release leads to (0.2.0 for
+#      0.2.0-rc.1), is compared with the earlier release: the highest release
+#      tag, or version listed in the changelog, that is not a pre-release. A
+#      patch release may have Fixed and Security entries only, and from 1.0
+#      on a **BREAKING** entry needs a major release. Without an earlier
+#      release (the first release), the version is not checked against the
+#      entries.
 #
 # Then the new text of both files is made in full (which may still stop the
 # script, for instance when the changelog lists a higher version), and only
@@ -58,8 +71,8 @@
 # (ArgXReadBytes.cmake), so their line endings (LF or CRLF) are kept, on
 # Windows too.
 #
-# The script prints what it changed. Run it twice with the same input and the
-# second run stops at check 6, since the changelog lists the version then. It
+# The script prints the kind of the release and what it changed. Run it twice
+# with the same input and the second run stops at check 6, since the changelog lists the version then. It
 # reads and writes only the files above and touches no network, git or GitHub.
 
 cmake_minimum_required(VERSION 3.21)
@@ -133,6 +146,7 @@ file(READ "${_argx_prepare_tags_file}" _argx_prepare_rest)
 string(APPEND _argx_prepare_rest "\n")
 set(_argx_prepare_tag_exists FALSE)
 set(_argx_prepare_highest "")
+set(_argx_prepare_base "")
 while(NOT _argx_prepare_rest STREQUAL "")
     string(FIND "${_argx_prepare_rest}" "\n" _argx_prepare_end)
     string(SUBSTRING "${_argx_prepare_rest}" 0 ${_argx_prepare_end} _argx_prepare_line)
@@ -159,6 +173,18 @@ while(NOT _argx_prepare_rest STREQUAL "")
             _argx_prepare_order)
         if(_argx_prepare_order EQUAL 1)
             set(_argx_prepare_highest "${_argx_prepare_tag_version}")
+        endif()
+    endif()
+    # The highest release that is not a pre-release, for check 7.
+    if(_argx_prepare_t_PRERELEASE STREQUAL "")
+        if(_argx_prepare_base STREQUAL "")
+            set(_argx_prepare_base "${_argx_prepare_tag_version}")
+        else()
+            argx_semver_compare("${_argx_prepare_tag_version}" "${_argx_prepare_base}"
+                _argx_prepare_order)
+            if(_argx_prepare_order EQUAL 1)
+                set(_argx_prepare_base "${_argx_prepare_tag_version}")
+            endif()
         endif()
     endif()
 endwhile()
@@ -223,6 +249,41 @@ if(_argx_prepare_c_UNRELEASED_ENTRIES EQUAL 0)
         "Record the changes of the release under it first.")
 endif()
 
+# --- 7. The version against the entries -------------------------------------------
+
+# The base is also the newest release in the changelog that is not a
+# pre-release, when it is higher than the tags give: a list of tags that lacks
+# a release, as in a clone without tags, does not turn the check off.
+foreach(_argx_prepare_listed IN LISTS _argx_prepare_c_VERSIONS)
+    argx_semver_parse("${_argx_prepare_listed}" _argx_prepare_l)
+    if(NOT _argx_prepare_l_PRERELEASE STREQUAL "")
+        continue()
+    endif()
+    if(_argx_prepare_base STREQUAL "")
+        set(_argx_prepare_base "${_argx_prepare_listed}")
+    else()
+        argx_semver_compare("${_argx_prepare_listed}" "${_argx_prepare_base}" _argx_prepare_order)
+        if(_argx_prepare_order EQUAL 1)
+            set(_argx_prepare_base "${_argx_prepare_listed}")
+        endif()
+    endif()
+    # The versions are listed newest first.
+    break()
+endforeach()
+argx_changelog_check_version("${_argx_prepare_changelog_text}" "${_argx_prepare_version}"
+    "${_argx_prepare_base}" _argx_prepare_k)
+if(NOT _argx_prepare_k_VALID)
+    message(FATAL_ERROR
+        "error: the entries under [Unreleased] in ${_argx_prepare_changelog} do not allow "
+        "the version ${_argx_prepare_version}: ${_argx_prepare_k_ERROR} See "
+        "docs/development/releasing.md#keeping-the-changelog.")
+endif()
+if(_argx_prepare_k_BREAKING GREATER 0)
+    set(_argx_prepare_breaking true)
+else()
+    set(_argx_prepare_breaking false)
+endif()
+
 # --- The new files -----------------------------------------------------------------
 
 # Both texts are made in full before either file is written; each function
@@ -242,6 +303,12 @@ else()
 endif()
 
 message(STATUS "Release ${_argx_prepare_tag} (pre-release: ${_argx_prepare_is_prerelease}).")
+if(_argx_prepare_k_KIND STREQUAL "first")
+    message(STATUS "The first release: no earlier release to check the entries against.")
+else()
+    message(STATUS "A ${_argx_prepare_k_KIND} release after ${_argx_prepare_base}, "
+        "with ${_argx_prepare_k_BREAKING} **BREAKING** entries.")
+endif()
 if(_argx_prepare_new_header STREQUAL _argx_prepare_header_text)
     set(_argx_prepare_header_change
         "${_argx_prepare_header}: already holds ${_argx_prepare_version}")
@@ -292,5 +359,6 @@ if(DEFINED ARGX_RELEASE_OUTPUT AND NOT "${ARGX_RELEASE_OUTPUT}" STREQUAL "")
     file(APPEND "${ARGX_RELEASE_OUTPUT}"
         "version=${_argx_prepare_version}\n"
         "tag=${_argx_prepare_tag}\n"
-        "prerelease=${_argx_prepare_is_prerelease}\n")
+        "prerelease=${_argx_prepare_is_prerelease}\n"
+        "breaking=${_argx_prepare_breaking}\n")
 endif()

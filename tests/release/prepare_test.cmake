@@ -166,7 +166,7 @@ make_tree(first "${header_0_1_0}" "${first_changelog}" root)
 run_prepare(run "${root}" 0.1.0 2026-11-13 "")
 expect_release("the first release" run "${root}" "${header_0_1_0}" "${first_expected}")
 argx_test_expect_equal("${run_FILE}"
-    "earlier=value\nversion=0.1.0\ntag=v0.1.0\nprerelease=false\n"
+    "earlier=value\nversion=0.1.0\ntag=v0.1.0\nprerelease=false\nbreaking=false\n"
     "the first release: the output file")
 argx_test_expect_contains("${run_OUTPUT}" "0.1.0"
     "the first release: the standard output names the version")
@@ -203,7 +203,7 @@ make_tree(pre "${header_0_1_0}" "${second_changelog}" root)
 run_prepare(run "${root}" 0.2.0-rc.1 2026-12-01 "${tags}")
 expect_release("a pre-release" run "${root}" "${header_rc}" "${second_expected}")
 argx_test_expect_equal("${run_FILE}"
-    "earlier=value\nversion=0.2.0-rc.1\ntag=v0.2.0-rc.1\nprerelease=true\n"
+    "earlier=value\nversion=0.2.0-rc.1\ntag=v0.2.0-rc.1\nprerelease=true\nbreaking=false\n"
     "a pre-release: the output file")
 
 # The same with CRLF line endings.
@@ -242,7 +242,8 @@ argx_test_expect_contains("${run_OUTPUT}" "0.1.0" "check only: the standard outp
 # Makes the tree <name> from <header> and <changelog>, runs the script with
 # <version> and <tags> (and the date 2026-12-01, unless an argument sets
 # another) and checks that it fails with "error: " and <reason> in its output,
-# and that neither the tree nor the output file has changed.
+# and that neither the tree nor the output file has changed. Sets run_OUTPUT
+# to the flattened output of the run.
 function(expect_failure what name header changelog version tags reason)
     make_tree(${name} "${header}" "${changelog}" root)
     tree_snapshot("${root}" before)
@@ -257,6 +258,7 @@ function(expect_failure what name header changelog version tags reason)
     tree_snapshot("${root}" after)
     argx_test_expect_equal("${after}" "${before}" "${what}: the tree is not written")
     argx_test_expect_equal("${run_FILE}" "earlier=value\n" "${what}: the output file is not written")
+    set(run_OUTPUT "${run_OUTPUT}" PARENT_SCOPE)
 endfunction()
 
 # Missing inputs and a date of another form.
@@ -339,6 +341,125 @@ expect_failure("no line ending at the end, as on Windows" no_newline "${header_0
 expect_failure("no line ending at the end, check only" no_newline_check "${header_0_1_0}"
     "${no_newline_changelog}" 0.2.0-rc.1 "v0.1.0\n" "ends with a line ending"
     "-DARGX_WRITE_BYTES_WITH_CONFIGURE=ON" "-DARGX_RELEASE_CHECK_ONLY=ON")
+
+# --- The version against the entries ----------------------------------------------
+
+# Sets <out-var> to a changelog with <body> under [Unreleased] and a released
+# 0.1.0. The body starts on line 5.
+function(entries_changelog body out_var)
+    set(${out_var} "# Changelog\n\n## [Unreleased]\n\n${body}\n## [0.1.0] - 2026-11-13\n\n\
+### Added\n\n- The first release.\n\n[Unreleased]: ${repo_url}/compare/v0.1.0...HEAD\n\
+[0.1.0]: ${repo_url}/releases/tag/v0.1.0\n" PARENT_SCOPE)
+endfunction()
+
+# Makes the tree <name> from <header> and a changelog with <body> under
+# [Unreleased], runs the script with <version> and <tags>, and checks that it
+# succeeds, prints <message> and writes breaking=<breaking> to the output file.
+function(expect_allowed what name header body version tags breaking message)
+    entries_changelog("${body}" changelog)
+    make_tree(${name} "${header}" "${changelog}" root)
+    run_prepare(run "${root}" "${version}" 2026-12-01 "${tags}")
+    argx_test_expect_equal("${run_RESULT}" "0" "${what}: the script succeeds")
+    argx_test_expect_contains("${run_FILE}" "\nbreaking=${breaking}\n"
+        "${what}: the output file has breaking=${breaking}")
+    argx_test_expect_contains("${run_OUTPUT}" "${message}" "${what}: the kind of the release")
+endfunction()
+
+# The same for a run that must fail with <reason>.
+function(expect_refused what name header body version tags reason)
+    entries_changelog("${body}" changelog)
+    expect_failure("${what}" ${name} "${header}" "${changelog}" "${version}" "${tags}"
+        "${reason}" ${ARGN})
+    argx_test_expect_contains("${run_OUTPUT}" "do not allow the version ${version}"
+        "${what}: the version is named")
+endfunction()
+
+header_text(1 2 0 "" header_1_2_0)
+set(fixed_body "### Fixed\n\n- A fix.\n\n### Security\n\n- A security fix.\n")
+set(breaking_body "### Changed\n\n- **BREAKING**: `argx_foo()` is renamed `argx_bar()`. \
+Rename the calls.\n")
+
+# Allowed versions.
+expect_allowed("a patch with Fixed and Security" allowed_patch "${header_0_1_0}" "${fixed_body}"
+    0.1.1 "v0.1.0\n" false "A patch release after 0.1.0, with 0 **BREAKING** entries.")
+expect_allowed("a breaking change before 1.0" allowed_minor_0 "${header_0_1_0}"
+    "${breaking_body}" 0.2.0 "v0.1.0\n" true "A minor release after 0.1.0")
+expect_allowed("an addition after 1.0" allowed_minor_1 "${header_1_2_0}"
+    "### Added\n\n- A function.\n" 1.3.0 "v1.2.0\n" false "A minor release after 1.2.0")
+string(REPLACE "Changed" "Removed" removed_body "${breaking_body}")
+expect_allowed("a breaking change in a major release" allowed_major "${header_1_2_0}"
+    "${removed_body}" 2.0.0 "v1.2.0\n" true "A major release after 1.2.0")
+expect_allowed("a pre-release of a major release" allowed_major_pre "${header_1_2_0}"
+    "${breaking_body}" 2.0.0-rc.1 "v1.2.0\n" true "A major release after 1.2.0")
+# The pre-release tags are not the base: 0.2.0 after 0.2.0-rc.1 is checked as a
+# minor release after 0.1.0.
+expect_allowed("a release after its pre-release" allowed_after_pre "${header_rc}"
+    "### Added\n\n- A function.\n" 0.2.0 "v0.1.0\nv0.2.0-rc.1\n" false
+    "A minor release after 0.1.0")
+# The first release is not checked against the entries, only for their form.
+set(first_entries_changelog
+    "# Changelog\n\n## [Unreleased]\n\n${breaking_body}\n[Unreleased]: ${repo_url}/commits/main\n")
+make_tree(allowed_first "${header_0_1_0}" "${first_entries_changelog}" root)
+run_prepare(run "${root}" 0.1.0 2026-12-01 "")
+argx_test_expect_equal("${run_RESULT}" "0" "the first release with a breaking change: the script succeeds")
+argx_test_expect_contains("${run_FILE}" "\nbreaking=true\n"
+    "the first release with a breaking change: the output file has breaking=true")
+argx_test_expect_contains("${run_OUTPUT}" "The first release"
+    "the first release with a breaking change: the kind of the release")
+string(REPLACE "### Changed\n\n" "" first_form_changelog "${first_entries_changelog}")
+expect_failure("an entry under no category in the first release" refused_first_form
+    "${header_0_1_0}" "${first_form_changelog}" 0.1.0 ""
+    "line 5: the entry is under no category heading")
+
+# A patch release has Fixed and Security entries only.
+foreach(category IN ITEMS Added Changed Deprecated Removed)
+    expect_refused("a patch with ${category}" refused_patch_${category} "${header_0_1_0}"
+        "### Fixed\n\n- A fix.\n\n### ${category}\n\n- A change.\n" 0.1.1 "v0.1.0\n"
+        "the version 0.1.1 is a patch release after 0.1.0, but line 11 is an entry under \
+${category}, which needs at least a minor release; a patch release may have Fixed and Security \
+entries only. Release 0.2.0 or higher.")
+endforeach()
+expect_refused("a patch with a breaking change" refused_patch_breaking "${header_0_1_0}"
+    "${breaking_body}" 0.1.1 "v0.1.0\n"
+    "line 7 is a **BREAKING** entry, which needs at least a minor release. Release 0.2.0 or higher.")
+expect_refused("a pre-release of a patch with Added" refused_patch_pre "${header_1_2_0}"
+    "### Added\n\n- A function.\n" 1.2.1-rc.1 "v1.2.0\n"
+    "the version 1.2.1-rc.1 is a patch release after 1.2.0")
+expect_refused("a patch after a pre-release tag" refused_patch_after_pre "${header_0_1_0}"
+    "### Added\n\n- A function.\n" 0.1.1 "v0.1.0\nv0.1.1-rc.1\n"
+    "the version 0.1.1 is a patch release after 0.1.0")
+# Without the tag v0.1.0, as in a clone without tags, the release 0.1.0 listed
+# in the changelog is the base.
+expect_refused("a patch without the tags" refused_patch_no_tags "${header_0_1_0}"
+    "### Added\n\n- A function.\n" 0.1.1 "" "the version 0.1.1 is a patch release after 0.1.0")
+expect_allowed("a patch without the tags, with a fix" allowed_patch_no_tags "${header_0_1_0}"
+    "${fixed_body}" 0.1.1 "" false "A patch release after 0.1.0")
+expect_refused("a patch, check only" refused_patch_check "${header_0_1_0}"
+    "### Added\n\n- A function.\n" 0.1.1 "v0.1.0\n" "is a patch release after 0.1.0"
+    "-DARGX_RELEASE_CHECK_ONLY=ON")
+
+# From 1.0 on, a breaking change needs a major release.
+expect_refused("a breaking change in a minor release after 1.0" refused_minor_breaking
+    "${header_1_2_0}" "${breaking_body}" 1.3.0 "v1.2.0\n"
+    "the version 1.3.0 is a minor release after 1.2.0, but line 7 is a **BREAKING** entry, \
+which needs a major release from 1.0 on. Release 2.0.0 or higher.")
+
+# The form of the entries, whatever the version.
+expect_refused("a breaking change under Fixed" refused_marker_place "${header_0_1_0}"
+    "### Fixed\n\n- **BREAKING**: A fix that changes the API.\n" 0.2.0 "v0.1.0\n"
+    "line 7: the **BREAKING** entry is under Fixed. A breaking change goes under Changed or Removed.")
+foreach(marker IN ITEMS "**Breaking**:" "**BREAKING:**" "BREAKING:" "__BREAKING__:")
+    string(MAKE_C_IDENTIFIER "${marker}" id)
+    expect_refused("the marker ${marker}" refused_marker_${id} "${header_0_1_0}"
+        "### Changed\n\n- ${marker} A change.\n" 0.2.0 "v0.1.0\n"
+        "line 7: the entry starts with a marker close to \"**BREAKING**: \"")
+endforeach()
+expect_refused("an entry under no category" refused_no_category "${header_0_1_0}"
+    "- A change.\n\n### Fixed\n\n- A fix.\n" 0.2.0 "v0.1.0\n"
+    "line 5: the entry is under no category heading")
+expect_refused("a category without entries" refused_empty_heading "${header_0_1_0}"
+    "### Added\n\n### Fixed\n\n- A fix.\n" 0.1.1 "v0.1.0\n"
+    "line 5: the category heading has no entry under it")
 
 # Running the script twice with the same input: the second run stops, since
 # the changelog lists the version now.
