@@ -10,15 +10,16 @@
  * is given to an array of a fixed size.
  *
  * A command of a schema has subcommands or positionals, not both, so a
- * help of this file has two lists at most: "Commands:" or "Arguments:",
- * and "Options:".
+ * help of this file has three lists at most: "Commands:" or "Arguments:",
+ * "Options:" and "Global options:".
  *
  * With the default settings "the indent + the width of the widest heading
  * + 2" is at most 32 in each schema of this file; where a test sets a
  * width, it is also at most half that width. So the texts do not depend on
- * the limit of the description column. No option of this file is required,
- * has a default value, a value type with choices or an initial state that
- * is on: the description of an option is its description text only. The
+ * the limit of the description column. No option of this file has a
+ * default value, a value type with choices or an initial state that is
+ * on, and only one is required, to show where its annotation goes: the
+ * description of every other option is its description text only. The
  * headings of the options have their own tests, in help_item_test.c.
  *
  * Every test uses the test allocator ("../support/test_allocator.h"). Its
@@ -1558,6 +1559,188 @@ NAOS_TEST(arguments_and_options_share_the_description_column)
     destroy_root(root);
 }
 
+/* ---- Global options --------------------------------------------------------- */
+
+/*
+ * Adds a global flag that must succeed, with the names and the description
+ * as for add_flag().
+ */
+static void add_global_flag(argx_command_t *command, char short_name, const char *long_name,
+                            const char *description)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_flag(command, short_name, long_name, &option) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_global(option, true) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_description(option, description) == ARGX_ERROR_NONE);
+}
+
+/*
+ * Adds a global option with a value of strings that must succeed, with the
+ * value name value_name and the description, required or not.
+ */
+static void add_global_value(argx_command_t *command, char short_name, const char *long_name,
+                             const char *value_name, const char *description, bool required)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_value(command, short_name, long_name, argx_type_string(),
+                                             &option) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_global(option, true) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_value_name(option, value_name) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_description(option, description) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_required(option, required) == ARGX_ERROR_NONE);
+}
+
+/*
+ * The command that defines a global option lists it in "Options:", as any
+ * of its options. A descendant lists it in "Global options:", after its
+ * own "Options:": the global options of the root first, then those of the
+ * next command down, each command's in definition order. The options of
+ * an ancestor that are not global are not listed.
+ */
+NAOS_TEST(global_options_are_listed_by_the_descendants)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *remote = add_sub(root, "remote", "Manage the remotes");
+    argx_command_t *add = add_sub(remote, "add", "Add a remote.");
+
+    add_global_flag(root, 'h', "help", "Print this help");
+    add_flag(root, '\0', "local", "Not global");
+    add_global_flag(root, 'v', "verbose", "Say more");
+    add_global_flag(remote, 'q', "quiet", "Say less");
+    add_positional(add, "name", ARGX_ARITY_REQUIRED, "Name of the remote");
+    add_flag(add, 'f', "force", "Replace it");
+    validate(root);
+
+    check_help(root,
+               "Usage: tool [OPTIONS] <COMMAND>\n"
+               "\n"
+               "Commands:\n"
+               "  remote         Manage the remotes\n"
+               "\n"
+               "Options:\n"
+               "  -h, --help     Print this help\n"
+               "      --local    Not global\n"
+               "  -v, --verbose  Say more\n");
+
+    check_help(remote,
+               "Usage: tool remote [OPTIONS] <COMMAND>\n"
+               "\n"
+               "Manage the remotes\n"
+               "\n"
+               "Commands:\n"
+               "  add            Add a remote.\n"
+               "\n"
+               "Options:\n"
+               "  -q, --quiet    Say less\n"
+               "\n"
+               "Global options:\n"
+               "  -h, --help     Print this help\n"
+               "  -v, --verbose  Say more\n");
+
+    check_help(add,
+               "Usage: tool remote add [OPTIONS] <name>\n"
+               "\n"
+               "Add a remote.\n"
+               "\n"
+               "Arguments:\n"
+               "  <name>         Name of the remote\n"
+               "\n"
+               "Options:\n"
+               "  -f, --force    Replace it\n"
+               "\n"
+               "Global options:\n"
+               "  -h, --help     Print this help\n"
+               "  -v, --verbose  Say more\n"
+               "  -q, --quiet    Say less\n");
+
+    destroy_root(root);
+}
+
+/*
+ * A command whose only options are inherited global options has no
+ * "Options:" list, but its usage line has "[OPTIONS]". A global option of
+ * a sibling is not listed.
+ */
+NAOS_TEST(global_options_alone_give_options_in_the_usage_line)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *build = add_sub(root, "build", NULL);
+    argx_command_t *run = add_sub(root, "run", NULL);
+
+    add_global_flag(root, 'v', "verbose", "Say more");
+    add_global_flag(build, 'r', "release", "Optimize");
+    add_positional(run, "file", ARGX_ARITY_REQUIRED, "What to run");
+    validate(root);
+
+    check_help(run,
+               "Usage: tool run [OPTIONS] <file>\n"
+               "\n"
+               "Arguments:\n"
+               "  <file>         What to run\n"
+               "\n"
+               "Global options:\n"
+               "  -v, --verbose  Say more\n");
+
+    destroy_root(root);
+}
+
+/*
+ * A required global option is annotated in "Global options:", but it is
+ * not in the usage line of a descendant: like every option of an
+ * ancestor, it is in the usage line of its command. With nothing else to
+ * stand for, "[OPTIONS]" is left out.
+ */
+NAOS_TEST(required_global_option_is_annotated_but_not_in_the_usage_line)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *run = add_sub(root, "run", NULL);
+
+    add_global_value(root, 't', "token", "TOKEN", "The token", true);
+    validate(root);
+
+    check_help(root,
+               "Usage: tool --token <TOKEN> <COMMAND>\n"
+               "\n"
+               "Commands:\n"
+               "  run\n"
+               "\n"
+               "Options:\n"
+               "  -t, --token <TOKEN>  The token [required]\n");
+
+    check_help(run,
+               "Usage: tool run\n"
+               "\n"
+               "Global options:\n"
+               "  -t, --token <TOKEN>  The token [required]\n");
+
+    destroy_root(root);
+}
+
+/* The headings of "Global options:" count for the description column. */
+NAOS_TEST(global_options_share_the_description_column)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *run = add_sub(root, "run", NULL);
+
+    add_global_value(root, 'c', "config", "FILE", "Read FILE", false);
+    add_flag(run, 'q', NULL, "Quiet");
+    validate(root);
+
+    check_help(run,
+               "Usage: tool run [OPTIONS]\n"
+               "\n"
+               "Options:\n"
+               "  -q                   Quiet\n"
+               "\n"
+               "Global options:\n"
+               "  -c, --config <FILE>  Read FILE\n");
+
+    destroy_root(root);
+}
+
 NAOS_SUITE(help,
     NAOS_ADD_TEST(root_with_description_and_subcommands),
     NAOS_ADD_TEST(second_level_subcommand_with_positionals),
@@ -1588,7 +1771,11 @@ NAOS_SUITE(help,
     NAOS_ADD_TEST(options_of_other_commands_are_not_listed),
     NAOS_ADD_TEST(options_come_in_definition_order),
     NAOS_ADD_TEST(commands_and_options_share_the_description_column),
-    NAOS_ADD_TEST(arguments_and_options_share_the_description_column)
+    NAOS_ADD_TEST(arguments_and_options_share_the_description_column),
+    NAOS_ADD_TEST(global_options_are_listed_by_the_descendants),
+    NAOS_ADD_TEST(global_options_alone_give_options_in_the_usage_line),
+    NAOS_ADD_TEST(required_global_option_is_annotated_but_not_in_the_usage_line),
+    NAOS_ADD_TEST(global_options_share_the_description_column)
 )
 
 NAOS_MAIN(

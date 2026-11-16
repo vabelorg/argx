@@ -18,7 +18,7 @@ The steps are numbered the same way in the comments of `main`.
 | Step | In examples/pack/pack.c |
 | --- | --- |
 | 1. Create the value types | `create_types`, `convert_size` |
-| 2. Define the schema | `define_schema`, `define_root`, `define_create`, `define_list`, `add_help` |
+| 2. Define the schema | `define_schema`, `define_root`, `define_create`, `define_list` |
 | 3. Validate it | `main`, `report_fault` |
 | 4. Parse argv, and branch on the error code | `main` |
 | 5. Print the help or the parse error | `print_help`, `print_parse_error`, `write_to_stream` |
@@ -51,7 +51,6 @@ Create the root command, then add options, positionals and subcommands. Keep the
 TRY(argx_command_add_subcommand(schema->root, "create", &schema->create));
 create = schema->create;
 TRY(argx_command_set_description(create, "Create an archive."));
-TRY(add_help(create));
 
 /* A required string. */
 TRY(argx_command_add_value(create, 'o', "output", argx_type_string(), &schema->output));
@@ -64,19 +63,21 @@ A failed add function writes a `NULL` handle, so stop at the first failure.
 
 **Subcommands are required by default.** `pack` alone is the parse error `MISSING_SUBCOMMAND`, and the usage line shows `<COMMAND>`. Like most programs with subcommands, `pack` then prints the help ([step 4](#4-parse-argv-and-branch-on-the-error-code)). To make a subcommand optional, or to print the error message instead, see [How-to](../guides/how-to.md#allowing-a-command-line-without-a-subcommand).
 
-**Define `--help` on every command, and make it terminal.** The library adds none, and an option is recognized only on its own command ([`--help`](../references/parse.md#--help)). A terminal flag ends the parse with success when it is read, so `pack --help` and `pack create --help` are not parse errors although they leave out the subcommand and `--output` ([Terminal flags](../references/parse.md#terminal-flags)). `add_help`:
+**Define `--help` once on the root, and make it terminal and global.** The library adds none ([`--help`](../references/parse.md#--help)). A terminal flag ends the parse with success when it is read, so `pack --help` and `pack create --help` are not parse errors although they leave out the subcommand and `--output` ([Terminal flags](../references/parse.md#terminal-flags)). An option is recognized only on its own command unless it is global; a global option is also known on every subcommand below it ([Global options](../references/syntax.md#global-options)). From `define_root`:
 
 ```c
-static argx_error_t add_help(argx_command_t *command)
-{
-    argx_option_t *option = NULL;
-    argx_error_t error;
+TRY(argx_command_add_flag(schema->root, 'h', "help", &schema->help));
+TRY(argx_option_set_description(schema->help, "Print this help."));
+TRY(argx_option_set_terminal(schema->help, true));
+TRY(argx_option_set_global(schema->help, true));
 
-    TRY(argx_command_add_flag(command, 'h', "help", &option));
-    TRY(argx_option_set_description(option, "Print this help."));
-    return argx_option_set_terminal(option, true);
-}
+/* A count: -v, -vv, --verbose. "pack -v create -v" counts 2. */
+TRY(argx_command_add_count(schema->root, 'v', "verbose", &schema->verbose));
+TRY(argx_option_set_description(schema->verbose, "Print more; can be repeated."));
+TRY(argx_option_set_global(schema->verbose, true));
 ```
+
+The other options of the root, `-q, --quiet` and `--[no-]color`, are global too, so the user can give them before or after the subcommand. Each is still one option, read with its one handle wherever it was given. The help of `create` and `list` lists them under `Global options:`.
 
 ## 3. Validate the schema
 

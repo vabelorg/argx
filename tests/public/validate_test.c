@@ -97,6 +97,15 @@ static argx_option_t *add_negatable(argx_command_t *command, char short_name, co
     return option;
 }
 
+static argx_option_t *add_count(argx_command_t *command, char short_name, const char *long_name)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_count(command, short_name, long_name, &option) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(option != NULL);
+    return option;
+}
+
 static argx_option_t *add_value(argx_command_t *command, char short_name, const char *long_name)
 {
     argx_option_t *option = NULL;
@@ -1053,18 +1062,19 @@ typedef enum mutation
     SET_OPTION_DEFAULT,
     SET_OPTION_INITIAL,
     SET_OPTION_TERMINAL,
+    SET_OPTION_GLOBAL,
     SET_POSITIONAL_DESCRIPTION,
     SET_POSITIONAL_DEFAULT
 } mutation_t;
 
-#define MUTATION_COUNT 17
+#define MUTATION_COUNT 18
 static const mutation_t all_mutations[MUTATION_COUNT] = {
     ADD_SUBCOMMAND,          ADD_FLAG,              ADD_NEGATABLE,       ADD_COUNT,
     ADD_VALUE,               ADD_POSITIONAL,        SET_COMMAND_DESCRIPTION,
     SET_COMMAND_SUMMARY,     SET_COMMAND_SUBCOMMAND_OPTIONAL,
     SET_OPTION_DESCRIPTION,  SET_OPTION_VALUE_NAME, SET_OPTION_REQUIRED, SET_OPTION_DEFAULT,
-    SET_OPTION_INITIAL,      SET_OPTION_TERMINAL,   SET_POSITIONAL_DESCRIPTION,
-    SET_POSITIONAL_DEFAULT
+    SET_OPTION_INITIAL,      SET_OPTION_TERMINAL,   SET_OPTION_GLOBAL,
+    SET_POSITIONAL_DESCRIPTION, SET_POSITIONAL_DEFAULT
 };
 
 /* Whether the change is made to a target with positionals. */
@@ -1095,6 +1105,7 @@ static size_t mutation_allocations(mutation_t mutation)
     case SET_OPTION_REQUIRED:
     case SET_OPTION_INITIAL:
     case SET_OPTION_TERMINAL:
+    case SET_OPTION_GLOBAL:
         return 0;
     default:
         return 1;
@@ -1141,6 +1152,9 @@ static argx_error_t mutate(const fixture_t *fixture, mutation_t mutation)
         return argx_option_set_initial(fixture->negatable, true);
     case SET_OPTION_TERMINAL:
         return argx_option_set_terminal(fixture->flag, true);
+    case SET_OPTION_GLOBAL:
+        /* No option below the target uses the names of the flag. */
+        return argx_option_set_global(fixture->flag, true);
     case SET_POSITIONAL_DESCRIPTION:
         return argx_positional_set_description(fixture->required, "A description.");
     case SET_POSITIONAL_DEFAULT:
@@ -1210,6 +1224,10 @@ NAOS_TEST(a_set_of_the_same_value_takes_a_validated_tree_back_to_not_validated)
         NAOS_REQUIRE_TRUE(argx_command_validate(fixture.root, NULL, NULL, NULL) == ARGX_ERROR_NONE);
 
         NAOS_CHECK_INT_EQ(argx_option_set_terminal(fixture.flag, false), ARGX_ERROR_NONE);
+        check_state(&fixture, false);
+        NAOS_REQUIRE_TRUE(argx_command_validate(fixture.root, NULL, NULL, NULL) == ARGX_ERROR_NONE);
+
+        NAOS_CHECK_INT_EQ(argx_option_set_global(fixture.flag, false), ARGX_ERROR_NONE);
         check_state(&fixture, false);
         NAOS_REQUIRE_TRUE(argx_command_validate(fixture.root, NULL, NULL, NULL) == ARGX_ERROR_NONE);
 
@@ -2432,6 +2450,181 @@ NAOS_TEST(a_lack_of_memory_of_a_built_in_conversion_is_returned_as_it_is)
     destroy_root(root);
 }
 
+/* ---- The names of global options ----------------------------------------- */
+
+/* Makes option global. */
+static void make_global(argx_option_t *option)
+{
+    NAOS_REQUIRE_TRUE(argx_option_set_global(option, true) == ARGX_ERROR_NONE);
+}
+
+/*
+ * An option of a descendant that uses a name of a global option is a name
+ * conflict, for each kind of name: the short name, the long name, and the
+ * negated name on either side. The option of the descendant is reported.
+ */
+NAOS_TEST(a_name_of_a_global_option_used_below_is_a_name_conflict)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *run = add_sub(root, "run");
+    argx_command_t *now = add_sub(run, "now");
+    argx_option_t *verbose = add_flag(root, 'v', "verbose");
+    argx_option_t *color = add_negatable(root, '\0', "color");
+    argx_option_t *faulty;
+
+    make_global(verbose);
+    make_global(color);
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    /* The short name, two levels below. */
+    faulty = add_flag(now, 'v', "version");
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, now, faulty, NULL);
+    NAOS_CHECK_FALSE(argx_command_is_validated(root));
+    destroy_root(root);
+
+    /* The long name. */
+    root = create_root();
+    run = add_sub(root, "run");
+    make_global(add_flag(root, 'v', "verbose"));
+    faulty = add_value(run, 'x', "verbose");
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, run, faulty, NULL);
+    destroy_root(root);
+
+    /* A long name that is the negated name of the global option. */
+    root = create_root();
+    run = add_sub(root, "run");
+    make_global(add_negatable(root, '\0', "color"));
+    faulty = add_flag(run, '\0', "no-color");
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, run, faulty, NULL);
+    destroy_root(root);
+
+    /* A negated name that is the long name of the global option. */
+    root = create_root();
+    run = add_sub(root, "run");
+    make_global(add_flag(root, '\0', "no-color"));
+    faulty = add_negatable(run, '\0', "color");
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, run, faulty, NULL);
+    destroy_root(root);
+
+    /* The same negatable flag on both sides. */
+    root = create_root();
+    run = add_sub(root, "run");
+    make_global(add_negatable(root, '\0', "color"));
+    faulty = add_negatable(run, 'c', "color");
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, run, faulty, NULL);
+    destroy_root(root);
+}
+
+/*
+ * The conflict is found whenever the option is made global: after the
+ * options of the descendants were added too.
+ */
+NAOS_TEST(an_option_made_global_after_the_descendants_is_checked)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *run = add_sub(root, "run");
+    argx_option_t *verbose = add_flag(root, 'v', "verbose");
+    argx_option_t *faulty = add_count(run, 'v', NULL);
+
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    make_global(verbose);
+    NAOS_CHECK_FALSE(argx_command_is_validated(root));
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, run, faulty, NULL);
+
+    /* Not global again, the names can be reused. */
+    NAOS_REQUIRE_TRUE(argx_option_set_global(verbose, false) == ARGX_ERROR_NONE);
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    destroy_root(root);
+}
+
+/*
+ * Only the descendants of the global option's command are checked: its
+ * ancestors and their other subcommands may reuse its names. So may the
+ * options of ancestors that are not global.
+ */
+NAOS_TEST(the_names_of_a_global_option_are_free_outside_its_subtree)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *remote = add_sub(root, "remote");
+    argx_command_t *add = add_sub(remote, "add");
+    argx_command_t *build = add_sub(root, "build");
+
+    /* Not global: the same names on every level. */
+    (void)add_flag(root, 'n', "name");
+    (void)add_flag(remote, 'n', "name");
+
+    make_global(add_flag(remote, 'v', "verbose"));
+    (void)add_flag(root, 'v', "verbose");
+    (void)add_flag(build, 'v', "verbose");
+    (void)add_flag(add, 'n', "name");
+    (void)add_flag(add, 'x', "extra");
+
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    destroy_root(root);
+}
+
+/*
+ * A global option below another one that has the same name is a conflict
+ * too: it is an option of a descendant.
+ */
+NAOS_TEST(two_global_options_with_the_same_name_in_one_line_are_a_name_conflict)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *run = add_sub(root, "run");
+    argx_option_t *faulty;
+
+    make_global(add_flag(root, 'h', "help"));
+    faulty = add_flag(run, 'h', "help");
+    make_global(faulty);
+
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, run, faulty, NULL);
+
+    destroy_root(root);
+}
+
+/*
+ * The conflict is the first check of an option: it is reported before a
+ * fault of the required and default value checks of the same option, and
+ * an earlier option's fault before it.
+ */
+NAOS_TEST(a_name_conflict_is_checked_first_and_in_the_order_of_the_options)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *run = add_sub(root, "run");
+    argx_option_t *earlier;
+    argx_option_t *later;
+
+    make_global(add_value(root, 'o', "output"));
+    earlier = add_value(run, 'e', "earlier");
+    later = add_value(run, 'o', "later");
+    make_faulty(later);
+
+    check_validate(root, ARGX_ERROR_NAME_CONFLICT, run, later, NULL);
+
+    make_faulty(earlier);
+    check_validate(root, ARGX_ERROR_INVALID_DEFINITION, run, earlier, NULL);
+
+    destroy_root(root);
+}
+
+/* A global option of a command without subcommands is valid. */
+NAOS_TEST(a_global_option_of_a_command_without_subcommands_is_valid)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *run = add_sub(root, "run");
+
+    make_global(add_flag(root, 'v', "verbose"));
+    make_global(add_flag(run, 'q', "quiet"));
+    (void)add_positional(run, "file", ARGX_ARITY_REQUIRED);
+
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    destroy_root(root);
+}
+
 NAOS_SUITE(valid,
     NAOS_ADD_TEST(a_new_root_is_not_validated),
     NAOS_ADD_TEST(a_new_subcommand_reads_a_tree_that_is_not_validated),
@@ -2501,6 +2694,15 @@ NAOS_SUITE(defaults,
     NAOS_ADD_TEST(a_lack_of_memory_of_a_built_in_conversion_is_returned_as_it_is)
 )
 
+NAOS_SUITE(global_names,
+    NAOS_ADD_TEST(a_name_of_a_global_option_used_below_is_a_name_conflict),
+    NAOS_ADD_TEST(an_option_made_global_after_the_descendants_is_checked),
+    NAOS_ADD_TEST(the_names_of_a_global_option_are_free_outside_its_subtree),
+    NAOS_ADD_TEST(two_global_options_with_the_same_name_in_one_line_are_a_name_conflict),
+    NAOS_ADD_TEST(a_name_conflict_is_checked_first_and_in_the_order_of_the_options),
+    NAOS_ADD_TEST(a_global_option_of_a_command_without_subcommands_is_valid)
+)
+
 NAOS_MAIN(
     NAOS_ADD_SUITE(valid),
     NAOS_ADD_SUITE(positional_order),
@@ -2508,5 +2710,6 @@ NAOS_MAIN(
     NAOS_ADD_SUITE(optional_subcommands),
     NAOS_ADD_SUITE(traversal),
     NAOS_ADD_SUITE(state),
-    NAOS_ADD_SUITE(defaults)
+    NAOS_ADD_SUITE(defaults),
+    NAOS_ADD_SUITE(global_names)
 )

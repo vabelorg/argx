@@ -303,7 +303,8 @@ ARGX_API const argx_command_t *argx_command_subcommand_at(const argx_command_t *
 /*
  * Returns the option of command whose short name is name, or NULL when
  * there is none. Only command's own options are searched, not those of
- * its parent or its subcommands. The match is case-sensitive. For '\0',
+ * its parent or its subcommands, and not the global options of its
+ * ancestors that a command line can give in command. The match is case-sensitive. For '\0',
  * which is not a name, the result is NULL.
  *
  * Preconditions:
@@ -322,7 +323,8 @@ ARGX_API const argx_option_t *argx_command_find_short(const argx_command_t *comm
  * nor a longer string matches.
  *
  * Only command's own options are searched, not those of its parent or its
- * subcommands.
+ * subcommands, and not the global options of its ancestors that a command
+ * line can give in command.
  *
  * When an option is found and negated is not NULL, *negated is false if
  * the long name matched and true if the negated name matched. When no
@@ -397,7 +399,9 @@ ARGX_API const argx_command_t *argx_command_find_subcommand(const argx_command_t
  * - ARGX_ERROR_OUT_OF_MEMORY: an allocation failed.
  *
  * The same names can be used in other commands, including command's
- * parent and its subcommands.
+ * parent and its subcommands, except for the names of a global option
+ * (argx_option_set_global()): argx_command_validate() checks that no
+ * option of a descendant of its command uses them.
  *
  * Preconditions:
  *
@@ -498,6 +502,15 @@ ARGX_API const argx_type_t *argx_option_type(const argx_option_t *option);
  *   such as --help or --version, which asks the program to do one thing
  *   and stop. Only for a flag, ARGX_OPTION_FLAG. See argx_parse() in
  *   <argx/parse.h>.
+ * - argx_option_set_global(): whether the option is global: known on its
+ *   command and on every descendant of that command, so that it can be
+ *   given after the name of any of them. Use it for an option of the
+ *   whole program, such as --help, --verbose or --config. It is still one
+ *   option, read with its one handle wherever it was given, and it still
+ *   belongs to its command: its required check and its default value are
+ *   those of its command. It is not known on the command's ancestors or on
+ *   its siblings. Every kind can be global. No option of a descendant may
+ *   use its names, which argx_command_validate() checks.
  *
  * Strings are copied. The empty string can be set; it is not the same as
  * an unset attribute. Setting an attribute again replaces its earlier
@@ -524,6 +537,7 @@ ARGX_API argx_error_t argx_option_set_required(argx_option_t *option, bool requi
 ARGX_API argx_error_t argx_option_set_default(argx_option_t *option, const char *value);
 ARGX_API argx_error_t argx_option_set_initial(argx_option_t *option, bool on);
 ARGX_API argx_error_t argx_option_set_terminal(argx_option_t *option, bool terminal);
+ARGX_API argx_error_t argx_option_set_global(argx_option_t *option, bool global);
 
 /*
  * Returns the description of option, or NULL when none has been set.
@@ -583,6 +597,15 @@ ARGX_API bool argx_option_initial(const argx_option_t *option);
  * - option is not NULL. Checked with assert.
  */
 ARGX_API bool argx_option_is_terminal(const argx_option_t *option);
+
+/*
+ * Returns whether option is global. It is false until set.
+ *
+ * Preconditions:
+ *
+ * - option is not NULL. Checked with assert.
+ */
+ARGX_API bool argx_option_is_global(const argx_option_t *option);
 
 /* ---- Positionals -------------------------------------------------------- */
 
@@ -743,8 +766,13 @@ ARGX_API const char *argx_positional_default(const argx_positional_t *positional
  *      one (ARGX_ARITY_OPTIONAL, ARGX_ARITY_ZERO_OR_MORE), or
  *    - an earlier positional takes any number of arguments
  *      (ARGX_ARITY_ZERO_OR_MORE, ARGX_ARITY_ONE_OR_MORE).
- * 2. The options, in the order they were added, running both checks on
- *    each option before the next. An option is faulty when
+ * 2. The options, in the order they were added, running all the checks
+ *    on each option before the next. An option is faulty when
+ *    - its short name, long name or negated name is a name of a global
+ *      option (argx_option_set_global()) of one of the command's
+ *      ancestors (ARGX_ERROR_NAME_CONFLICT). The global option is not the
+ *      faulty one: the option of the descendant is. Options that are not
+ *      global, and the options of siblings, may still reuse names.
  *    - it is required and has a default value
  *      (ARGX_ERROR_INVALID_DEFINITION), or
  *    - its value type does not take its default value
@@ -773,8 +801,9 @@ ARGX_API const char *argx_positional_default(const argx_positional_t *positional
  * Returns ARGX_ERROR_NONE when the tree has no fault. The tree is then
  * validated, and NULL is written to *command, *option and *positional.
  *
- * Returns ARGX_ERROR_INVALID_DEFINITION or ARGX_ERROR_INVALID_DEFAULT
- * for a fault, as listed with the checks above. The faulty command, or
+ * Returns ARGX_ERROR_NAME_CONFLICT, ARGX_ERROR_INVALID_DEFINITION or
+ * ARGX_ERROR_INVALID_DEFAULT for a fault, as listed with the checks
+ * above. The faulty command, or
  * the command that owns the faulty option or positional, is written to
  * *command. The faulty option is written to *option, or the faulty
  * positional to *positional, and NULL to the other one; for a faulty

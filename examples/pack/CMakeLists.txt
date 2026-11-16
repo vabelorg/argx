@@ -14,6 +14,13 @@ argx_add_example_test(pack values
 argx_add_example_test(pack list
     "^verbose: 0, color: on\r?\nlist out\\.tar, pattern \\* \\(default\\)\r?\n$"
     ARGS list out.tar)
+# The global options of pack, given before and after the subcommand.
+argx_add_example_test(pack global
+    "^verbose: 2, color: off\r?\nlist out\\.tar, pattern \\* \\(default\\)\r?\n$"
+    ARGS -v list --no-color -v out.tar)
+argx_add_example_test(pack global-help
+    "\r?\nGlobal options:\r?\n  -h, --help +Print this help\\.\r?\n  -v, --verbose\\.\\.\\. +Print more; can be repeated\\.\r?\n"
+    ARGS create --help)
 argx_add_example_test(pack help
     "^Usage: pack create \\[OPTIONS\\] --output <FILE> <file>\\.\\.\\.\r?\n\r?\nCreate an archive\\.\r?\n"
     ARGS create --help)

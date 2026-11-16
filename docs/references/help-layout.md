@@ -30,7 +30,7 @@ Options:
   indent (column 2)    description column (column 23)
 ```
 
-- A **list** is `Commands:`, `Arguments:` or `Options:`; an **item** is one entry in it. An item's **description** is its description text plus its annotations.
+- A **list** is `Commands:`, `Arguments:`, `Options:` or `Global options:`; an **item** is one entry in it. An item's **description** is its description text plus its annotations.
 - A **column** is a byte offset from the start of the line, from 0. All widths are in bytes.
 - Lines end with `\n` only, including the last one, and never with a blank unless a name does.
 - Fixed phrases are English. Schema strings are written unchanged; descriptions and annotations are wrapped.
@@ -44,9 +44,30 @@ Options:
 | 3 | `Commands:` | There are subcommands | The direct subcommands, each with its summary or, without one, the first line of its description |
 | 4 | `Arguments:` | There are positionals | The positionals, with full descriptions |
 | 5 | `Options:` | There are options | The options, with full descriptions |
+| 6 | `Global options:` | An ancestor has global options | The [global options](syntax.md#global-options) of the ancestors, with full descriptions |
 
 - Parts are separated by one empty line, with none at the start or end. Absent parts leave no trace.
-- Lists show items in definition order, and only those of the command itself, never the parent's.
+- Lists show items in definition order, and only those of the command itself, never the parent's, with one exception: `Global options:` lists the global options of the command's ancestors, the root's first, then those of each command further down, each command's in definition order.
+- A command lists its own global options in `Options:`, like any of its options. The global options of its siblings and descendants are not listed.
+
+`pack create`, when the root `pack` defines a global `-v, --verbose` count and a global `--[no-]color`:
+
+```
+Usage: pack create [OPTIONS] --output <FILE> <file>...
+
+Create an archive.
+
+Arguments:
+  <file>...            The files to pack.
+
+Options:
+  -h, --help           Print this help.
+  -o, --output <FILE>  The archive to write. [required]
+
+Global options:
+  -v, --verbose...     Print more.
+      --[no-]color     Color the output. [default: on]
+```
 
 A command with nothing defined:
 
@@ -59,8 +80,8 @@ Usage: tool
 | Order | Item | Appears when | Notation |
 | --- | --- | --- | --- |
 | 1 | Command path | Always | `Usage: ` and the names from the root, separated by blanks |
-| 2 | `[OPTIONS]` | There is an option that is not required | `[OPTIONS]` |
-| 3 | Required options | Each required option with a value, in order | `--long <value name>`, or `-s <value name>` |
+| 2 | `[OPTIONS]` | There is an option that is not required, of the command or among the global options of its ancestors | `[OPTIONS]` |
+| 3 | Required options | Each required option with a value of the command, in order | `--long <value name>`, or `-s <value name>` |
 | 4 | Positionals | Each positional, in order | By arity, below |
 | 5 | Subcommand | There are subcommands | `<COMMAND>`, or `[COMMAND]` when they are optional (`argx_command_set_subcommand_optional`) |
 
@@ -76,6 +97,7 @@ Usage: tool --output <FILE> -j <integer> <source> [target] [extra]...
 Usage: tool remote add [OPTIONS] <name>
 ```
 
+- A required global option is in the usage line of its own command only, like every option of an ancestor; a descendant lists it in `Global options:` with `[required]`.
 - Items are separated by one blank. When an item would pass the width (if not 0), the blank becomes a newline and 7 blanks, aligning with the command path.
 - Items are never split; one wider than the width runs past it on its own line. The command path is never wrapped.
 
@@ -192,4 +214,4 @@ Options:
 - **Widths are counted in bytes,** so non-ASCII text wraps early and widens the description column. Tabs and control characters count one column per byte.
 - **A newline in a name breaks the columns.** Names and value names are written as they are, newlines included, but still measured as one line. Do not put newlines in names.
 - **Blanks in names and `\r` anywhere are written unchanged,** so a root named `"tool "` gives `Usage: tool `.
-- The help cannot be translated, colored, reordered, hidden or grouped, and a subcommand's help never shows its parent's options.
+- The help cannot be translated, colored, reordered, hidden or grouped, and a subcommand's help never shows the options of its ancestors other than their global options.

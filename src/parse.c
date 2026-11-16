@@ -6,11 +6,13 @@
  *
  * Each argument is read once, from the first after the program name to
  * the last. It is classified by its shape ("lex.h") and matched against
- * the schema, which is read only through <argx/schema.h>. Everything that
- * is read is recorded through the functions of "parse_internal.h". This
- * source never reads or writes a result's fields. It reads the arguments
- * from the result's copy, so that every string the result keeps a pointer
- * to is in that copy.
+ * the schema, which is read only through <argx/schema.h>. An option is
+ * looked up in the current command and then among the global options of
+ * its ancestors, nearest first. Everything that is read is recorded
+ * through the functions of "parse_internal.h". This source never reads or
+ * writes a result's fields. It reads the arguments from the result's
+ * copy, so that every string the result keeps a pointer to is in that
+ * copy.
  *
  * A terminal flag ends the scan: the arguments after it are not read, and
  * the result is not resolved.
@@ -40,11 +42,66 @@ typedef struct scan
      * argument that is not an option.
      */
     size_t positional;
-    bool has_digit_short;          /* Whether command has an option whose short name is a digit. */
+    bool has_digit_short;          /* Whether a digit is a short name known in command. */
     bool stopped;                  /* Whether a terminal flag was read: the scan ends. */
 } scan_t;
 
-/* Makes command the current command of scan. */
+/*
+ * Returns the option that the short name name gives in command: command's
+ * own option or, when it has none, the global option of the nearest
+ * ancestor that has one. Returns NULL when there is none. An ancestor's
+ * option that is not global is not known in command.
+ *
+ * A validated tree has at most one: no option of a descendant uses a
+ * name of a global option.
+ */
+static const argx_option_t *find_short(const argx_command_t *command, char name)
+{
+    const argx_option_t *option = argx_command_find_short(command, name);
+    const argx_command_t *ancestor;
+
+    for (ancestor = argx_command_parent(command); (option == NULL) && (ancestor != NULL);
+         ancestor = argx_command_parent(ancestor))
+    {
+        option = argx_command_find_short(ancestor, name);
+        if ((option != NULL) && !argx_option_is_global(option))
+        {
+            option = NULL;
+        }
+    }
+
+    return option;
+}
+
+/*
+ * Returns the option that the first length bytes of name give in command,
+ * as a long name or a negated name, looked up as find_short() does.
+ * *negated is written as argx_command_find_long() writes it.
+ */
+static const argx_option_t *find_long(const argx_command_t *command, const char *name,
+                                      size_t length, bool *negated)
+{
+    const argx_option_t *option = argx_command_find_long(command, name, length, negated);
+    const argx_command_t *ancestor;
+
+    for (ancestor = argx_command_parent(command); (option == NULL) && (ancestor != NULL);
+         ancestor = argx_command_parent(ancestor))
+    {
+        option = argx_command_find_long(ancestor, name, length, negated);
+        if ((option != NULL) && !argx_option_is_global(option))
+        {
+            option = NULL;
+        }
+    }
+
+    return option;
+}
+
+/*
+ * Makes command the current command of scan. A digit is a short name
+ * known in command when it is the short name of one of command's options
+ * or of a global option of one of its ancestors.
+ */
 static void enter_command(scan_t *scan, const argx_command_t *command)
 {
     char digit;
@@ -54,7 +111,7 @@ static void enter_command(scan_t *scan, const argx_command_t *command)
     scan->has_digit_short = false;
     for (digit = '0'; digit <= '9'; digit++)
     {
-        if (argx_command_find_short(command, digit) != NULL)
+        if (find_short(command, digit) != NULL)
         {
             scan->has_digit_short = true;
         }
@@ -114,10 +171,12 @@ static argx_error_t check_encoding(argx_result_t *result, const scan_t *scan)
 }
 
 /*
- * Records that option, an option of scan's current command, was given by
- * the argument that scan is at. where tells how it was written. on is the
- * state that a negatable flag was given with. value is the value written
- * with the option in the same argument, or NULL when there is none.
+ * Records that option, an option known in scan's current command, was
+ * given by the argument that scan is at. where tells how it was written.
+ * A parse error about it names the current command, which is not its
+ * command when it is a global option of an ancestor. on is the state that
+ * a negatable flag was given with. value is the value written with the
+ * option in the same argument, or NULL when there is none.
  *
  * An option that takes a value but was given none takes the next
  * argument, whatever it looks like, and scan moves on to it; where->index
@@ -191,8 +250,8 @@ static argx_error_t record_option(argx_result_t *result, scan_t *scan, const arg
 }
 
 /*
- * Reads arg, the argument that scan is at, as a long option of the current
- * command.
+ * Reads arg, the argument that scan is at, as a long option known in the
+ * current command.
  */
 static argx_error_t scan_long(argx_result_t *result, scan_t *scan, const char *arg)
 {
@@ -207,7 +266,7 @@ static argx_error_t scan_long(argx_result_t *result, scan_t *scan, const char *a
     where.name_prefix = "--";
     argx_lex_split_long(arg, &where.name, &where.name_length, &value);
 
-    option = argx_command_find_long(scan->command, where.name, where.name_length, &negated);
+    option = find_long(scan->command, where.name, where.name_length, &negated);
     if (option == NULL)
     {
         return fail_at(result, scan, ARGX_PARSE_ERROR_UNKNOWN_OPTION, &where, NULL, NULL);
@@ -217,9 +276,9 @@ static argx_error_t scan_long(argx_result_t *result, scan_t *scan, const char *a
 }
 
 /*
- * Reads arg, the argument that scan is at, as a bundle of short options of
- * the current command: each character after the '-' is a short name, read
- * from first to last.
+ * Reads arg, the argument that scan is at, as a bundle of short options
+ * known in the current command: each character after the '-' is a short
+ * name, read from first to last.
  *
  * An option that takes a value ends the bundle. The characters after its
  * letter, whatever they are, are its value; when it is the last letter, it
@@ -233,7 +292,7 @@ static argx_error_t scan_bundle(argx_result_t *result, scan_t *scan, const char 
 
     for (letter = arg + 1; *letter != '\0'; letter++)
     {
-        const argx_option_t *option = argx_command_find_short(scan->command, *letter);
+        const argx_option_t *option = find_short(scan->command, *letter);
         argx_result_where_t where;
         argx_error_t error;
 
@@ -359,8 +418,9 @@ static argx_error_t scan_plain(argx_result_t *result, scan_t *scan, const char *
  * Reads the arguments of result, which has count arguments and root as
  * its only selected command, starting with the first after the program
  * name. The current command is root at first, then the subcommand named
- * last. An option is looked up in the current command only, never in its
- * parent or its subcommands. Each argument is checked before it is read
+ * last. An option is looked up in the current command and then among the
+ * global options of its ancestors, never among their other options or in
+ * the subcommands. Each argument is checked before it is read
  * (check_encoding()). Stops at the first error, and after a terminal flag;
  * the arguments after it are not read or checked.
  *

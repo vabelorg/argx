@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 /*
  * The location of a fault: the command it is in, and the option or
@@ -116,13 +117,59 @@ static argx_error_t check_default(const argx_type_t *type, const char *text)
     return ARGX_ERROR_INVALID_DEFAULT;
 }
 
+/* Whether found, the result of a lookup, is a global option. */
+static bool is_global(const argx_option_t *found)
+{
+    return (found != NULL) && argx_option_is_global(found);
+}
+
 /*
- * Checks the options of command in definition order, each against two
+ * Whether one of option's names, short, long or negated, is a name of a
+ * global option of an ancestor of option's command. A command's names
+ * are unique within it, so one lookup per name and ancestor finds the
+ * only option that could have it.
+ */
+static bool uses_global_name(const argx_option_t *option)
+{
+    const char short_name = argx_option_short_name(option);
+    const char *long_name = argx_option_long_name(option);
+    const char *negated_name = argx_option_negated_name(option);
+    const argx_command_t *ancestor;
+
+    for (ancestor = argx_command_parent(argx_option_command(option)); ancestor != NULL;
+         ancestor = argx_command_parent(ancestor))
+    {
+        /* For '\0', which is not a name, the lookup finds nothing. */
+        if (is_global(argx_command_find_short(ancestor, short_name)))
+        {
+            return true;
+        }
+
+        if ((long_name != NULL) &&
+            is_global(argx_command_find_long(ancestor, long_name, strlen(long_name), NULL)))
+        {
+            return true;
+        }
+
+        if ((negated_name != NULL) &&
+            is_global(argx_command_find_long(ancestor, negated_name, strlen(negated_name), NULL)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/*
+ * Checks the options of command in definition order, each against three
  * rules, in this order:
  *
- * 1. It is not both required and given a default value
+ * 1. None of its names is a name of a global option of an ancestor of
+ *    command (ARGX_ERROR_NAME_CONFLICT).
+ * 2. It is not both required and given a default value
  *    (ARGX_ERROR_INVALID_DEFINITION).
- * 2. Its value type accepts its default value, if it has one
+ * 3. Its value type accepts its default value, if it has one
  *    (ARGX_ERROR_INVALID_DEFAULT).
  *
  * Stops at the first option that breaks a rule, writes it to *faulty and
@@ -141,6 +188,12 @@ static argx_error_t check_options(const argx_command_t *command, const argx_opti
         const argx_option_t *option = argx_command_option_at(command, index);
         const char *text = argx_option_default(option);
         argx_error_t error;
+
+        if (uses_global_name(option))
+        {
+            *faulty = option;
+            return ARGX_ERROR_NAME_CONFLICT;
+        }
 
         /* Only an option that takes a value has a default value. */
         if (text == NULL)

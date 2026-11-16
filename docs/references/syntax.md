@@ -6,7 +6,7 @@ The command lines a program using ArgX accepts, for both `argx_parse` and `argx_
 
 - An **element** is one string of argv (`argv[1]` onward).
 - The **terminator** is the first `--` read as an element on its own. Every element after it is a value.
-- The **current command** is the root, then each subcommand whose name appears. **Options are looked up only in the current command.**
+- The **current command** is the root, then each subcommand whose name appears. **Options are looked up in the current command, then among the [global options](#global-options) of its ancestors,** nearest first. These are the options **known** in the command.
 - An **operand** is an element that is neither an option nor the terminator: a subcommand name if the current command has subcommands, otherwise a positional value. No validated command has both.
 
 ## How elements are classified
@@ -19,14 +19,14 @@ Each element is classified by the first matching row.
 | `--` | — | The terminator. Not a value |
 | `--x…` | — | A long option, split into name and value at the first `=` |
 | `-` | — | An operand |
-| `-N…`, `-.N…` (N is a digit) | The current command has no digit short name | An operand |
+| `-N…`, `-.N…` (N is a digit) | No digit is a short name known in the current command | An operand |
 | `-x…` | — | A bundle of short options |
 | Anything else, including `""` | — | An operand |
 
 - The terminator stays in effect across subcommands.
 - An element taken as the value of an option is not classified: in `--name -x` and `--name --`, `-x` and `--` are values.
 - Names are compared whole, byte by byte, and case-sensitively. Prefixes do not match.
-- If the current command has a digit short name, `-1` and `-.5` are bundles; write negative numbers after the terminator.
+- If a digit is a short name known in the current command, its own or a global option's, `-1` and `-.5` are bundles; write negative numbers after the terminator. A global option with a digit short name does this on every descendant.
 - A [terminal flag](parse.md#terminal-flags) ends the scan: the elements after it, and the letters after it in the same bundle, are not read.
 
 ## How options take values
@@ -72,10 +72,27 @@ Operands are assigned in order to the positionals in the order they were added. 
 ## Subcommands
 
 - An operand matching a subcommand name makes it the current command, at any depth. Any other name is `UNKNOWN_SUBCOMMAND`.
-- **An option goes after the name of its command and before the name of that command's subcommand.** In `pack -v create`, `-v` belongs to `pack`; in `pack create -v`, to `create`. Subcommands do not inherit options, and same-named options in parent and child are separate.
+- **An option goes after the name of its command and before the name of that command's subcommand,** unless it is [global](#global-options). In `pack -v create`, `-v` belongs to `pack`; in `pack create -v`, to `create`, unless `create` has no `-v` and the `-v` of `pack` is global. Same-named options in parent and child are separate options.
 - **Subcommands are required unless made optional.** Ending in a command with subcommands, without naming one, is `MISSING_SUBCOMMAND`. With `argx_command_set_subcommand_optional(command, true)`, it is not a parse error, and `argx_result_command` returns that command. The setting belongs to each command: `git remote` can be optional while `git` itself requires a subcommand.
 - Elements after the terminator never name a subcommand.
 - Options and positionals of unselected commands read as not given ([Rules for reading](parse.md#rules-for-reading)).
+
+## Global options
+
+An option made global with `argx_option_set_global` is known on its command and on every descendant of that command, at any depth. It is not known on the command's ancestors or on its siblings.
+
+```
+pack -v create -vv -o out.tar a.txt    -v is the global count of pack: 3
+pack create --help                     the global --help of pack
+pack --quiet list x                    --quiet, global on list, is not known on pack: UNKNOWN_OPTION
+```
+
+- **One option, one handle.** Wherever it is given, it is the option of the command that defines it, read with the handle that `argx_command_add_*` wrote. Nothing is copied into the descendants.
+- **Repeats add up across commands,** by the rules of [Repeated options](#repeated-options): a count counts every occurrence, and the last value or state wins.
+- **Its required check and default value belong to its command,** in the [order](#required-checks-and-default-values) of that command. A required global option may be given after the name of any descendant.
+- **A parse error about it is found in the current command.** `argx_result_error_command` returns the command being read, which is a descendant when the option was given there, and `argx_result_error_option` returns the global option ([Parse errors](parse.md#parse-errors)).
+- **Its names are reserved below its command.** No option of a descendant may use its short, long or negated name; validation reports such an option as `ARGX_ERROR_NAME_CONFLICT` ([Validation](schema.md#validation)). So in a validated schema a name is known in a command through one option at most.
+- A global option of a subcommand is a separate option from any option of the same name in an ancestor or a sibling.
 
 ## Required checks and default values
 
