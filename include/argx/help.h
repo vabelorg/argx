@@ -198,13 +198,15 @@ ARGX_API void argx_help_options_set_max_column(argx_help_options_t *options, siz
  * - "Usage: " and the command path: the names of the commands from the
  *   root down to command, separated by single blanks.
  * - "[OPTIONS]", when command has an option that is not required: a flag,
- *   a negatable flag, a count, or an option with a value that is not
- *   required. The global options of command's ancestors
+ *   a negatable flag, a count, or an option with a value or list option
+ *   that is not required. The global options of command's ancestors
  *   (argx_option_set_global() in <argx/schema.h>) count too.
  * - Each required option of command, in the order the options were added:
  *   "--" and the long name, or "-" and the short name when the option has
  *   no long name, then a blank and the value name between "<" and ">".
- *   When no value name is set, the value type's name is used instead.
+ *   When no value name is set, the value type's name is used instead. A
+ *   list option's value is written as in its heading, below, without
+ *   "...".
  * - Each positional of command, in the order the positionals were added:
  *   "<name>" for one that takes exactly one argument, "[name]" for zero
  *   or one, "[name]..." for zero or more, "<name>..." for one or more.
@@ -310,21 +312,26 @@ ARGX_API argx_error_t argx_help_write_usage(const argx_command_t *command,
  * long name is written as "--[no-]long". A count has "..." right after the
  * names. An option with a value has, after the names, a blank and the
  * value name between "<" and ">", as in "-o, --output <FILE>"; when no
- * value name is set, the value type's name is used instead. Only the
- * schema's options are listed: none is added, and an option that the
+ * value name is set, the value type's name is used instead. A list option
+ * is written the same way, as one occurrence; with a separator, the value
+ * is followed by "[", the separator, the value again and "...]", as in
+ * "-k, --keys <KEY>[,<KEY>...]". Only the schema's options are listed: none is added, and an option that the
  * schema defines for help, such as "--help", is listed like any other.
  *
  * The annotations of an option or positional follow its description, in
  * this order, each after one blank:
  *
- * - "[choices: a, b, c]": for an option with a value or a positional whose
- *   value type has choices. The choices appear in the order they were
+ * - "[choices: a, b, c]": for an option that takes a value or a positional
+ *   whose value type has choices. The choices appear in the order they were
  *   defined, separated by ", ".
  * - "[default: VALUE]": for an option with a value or a positional that
  *   has a default value. VALUE is the string that was set, not converted,
  *   and it is broken as part of the description: see below.
  *   "[default: on]": for a negatable flag whose initial state is on. One
- *   whose initial state is off has no annotation.
+ *   whose initial state is off has no annotation. "[default: a, b]": for a
+ *   list option with default items, in the order they were added,
+ *   separated by ", ".
+ * - "[repeatable]": for a list option.
  * - "[required]": for a required option. A positional has none: its
  *   heading shows whether it is required.
  *

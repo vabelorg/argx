@@ -170,6 +170,68 @@ static argx_error_t check_encoding(argx_result_t *result, const scan_t *scan)
                    argx_result_arg(result, scan->index), NULL);
 }
 
+/* Whether option takes a value: ARGX_OPTION_VALUE or ARGX_OPTION_LIST. */
+static bool takes_value(const argx_option_t *option)
+{
+    const argx_option_kind_t kind = argx_option_kind(option);
+
+    return (kind == ARGX_OPTION_VALUE) || (kind == ARGX_OPTION_LIST);
+}
+
+/*
+ * Whether text, a value of a list option with the separator separator
+ * ('\0' for none), has an empty item: with a separator, text is empty,
+ * starts or ends with it, or has two of it in a row. Without one, no item
+ * is empty, since text is one item that the value type checks.
+ */
+static bool has_empty_item(const char *text, char separator)
+{
+    const char *c;
+
+    if (separator == '\0')
+    {
+        return false;
+    }
+
+    if ((text[0] == '\0') || (text[0] == separator))
+    {
+        return true;
+    }
+
+    for (c = text; c[1] != '\0'; ++c)
+    {
+        if ((c[0] == separator) && (c[1] == separator))
+        {
+            return true;
+        }
+    }
+
+    return *c == separator;
+}
+
+/*
+ * Records the value text for option, an option that takes a value, at
+ * where. A list option's value is split at its separator, and one with an
+ * empty item is a parse error, found in scan's current command; its value
+ * is the whole text.
+ */
+static argx_error_t record_value(argx_result_t *result, const scan_t *scan,
+                                 const argx_option_t *option, const char *text,
+                                 const argx_result_where_t *where)
+{
+    if (argx_option_kind(option) != ARGX_OPTION_LIST)
+    {
+        return argx_result_record_option_value(result, option, text, where);
+    }
+
+    if (has_empty_item(text, argx_option_separator(option)))
+    {
+        return fail_at(result, scan, ARGX_PARSE_ERROR_EMPTY_ITEM, where, text, option);
+    }
+
+    return argx_result_record_option_items(result, option, text, where);
+}
+
 /*
  * Records that option, an option known in scan's current command, was
  * given by the argument that scan is at. where tells how it was written.
@@ -192,7 +254,7 @@ static argx_error_t record_option(argx_result_t *result, scan_t *scan, const arg
     const argx_option_kind_t kind = argx_option_kind(option);
     argx_error_t error;
 
-    if (kind == ARGX_OPTION_VALUE)
+    if (takes_value(option))
     {
         if (value == NULL)
         {
@@ -212,7 +274,7 @@ static argx_error_t record_option(argx_result_t *result, scan_t *scan, const arg
             value = argx_result_arg(result, scan->index);
         }
 
-        return argx_result_record_option_value(result, option, value, where);
+        return record_value(result, scan, option, value, where);
     }
 
     if (value != NULL)
@@ -237,6 +299,7 @@ static argx_error_t record_option(argx_result_t *result, scan_t *scan, const arg
         argx_result_record_state(result, option, on);
         break;
     case ARGX_OPTION_VALUE:
+    case ARGX_OPTION_LIST:
     default:
         /*
          * An option that takes a value was recorded above. A kind added by
@@ -312,7 +375,7 @@ static argx_error_t scan_bundle(argx_result_t *result, scan_t *scan, const char 
             return fail_at(result, scan, ARGX_PARSE_ERROR_UNKNOWN_OPTION, &where, NULL, NULL);
         }
 
-        if (argx_option_kind(option) == ARGX_OPTION_VALUE)
+        if (takes_value(option))
         {
             return record_option(result, scan, option, true, (letter[1] != '\0') ? (letter + 1) : NULL, &where);
         }

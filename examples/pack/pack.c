@@ -30,7 +30,8 @@
  * It accepts command lines of this form:
  *
  *   pack [GLOBAL]... create [GLOBAL]... -o FILE [-l LEVEL] [--ratio RATIO]
- *        [--format tar|zip] [--block-size SIZE] file...
+ *        [--format tar|zip] [--block-size SIZE] [-x PATTERN[,PATTERN...]]...
+ *        file...
  *   pack [GLOBAL]... list [GLOBAL]... archive [pattern]
  *
  * where GLOBAL is one of the global options -h, -v, -q, --color and
@@ -52,6 +53,13 @@
  *   create out.zip, level 9 (command line)
  *   format zip, block size 2097152 bytes, ratio 0.50
  *     -x.txt
+ *
+ *   $ pack create -o out.tar -x '*.o,*.tmp' --exclude build a.txt
+ *   verbose: 0, color: on
+ *   create out.tar, level 6 (default)
+ *   format tar, block size 65536 bytes, ratio 0.50
+ *   exclude *.o, *.tmp, build
+ *     a.txt
  *
  *   $ pack list out.tar
  *   verbose: 0, color: on
@@ -127,6 +135,7 @@ typedef struct pack_schema
     argx_option_t *ratio;           /* create: --ratio RATIO; 0.5 if not given */
     argx_option_t *archive_format;  /* create: --format tar|zip; tar if not given */
     argx_option_t *block_size;      /* create: --block-size SIZE; 64k if not given */
+    argx_option_t *exclude;         /* create: -x, --exclude PATTERN; any number */
     argx_positional_t *files;       /* create: file... */
     argx_positional_t *archive;     /* list: archive */
     argx_positional_t *pattern;     /* list: [pattern]; "*" if not given */
@@ -281,6 +290,15 @@ static argx_error_t define_create(pack_schema_t *schema)
     TRY(argx_option_set_description(schema->block_size, "The size of a block."));
     TRY(argx_option_set_value_name(schema->block_size, "SIZE"));
     TRY(argx_option_set_default(schema->block_size, "64k"));
+
+    /*
+     * A list option: it keeps every value it is given, and splits each one
+     * at ',', so "-x '*.o,*.tmp' -x build" gives three patterns.
+     */
+    TRY(argx_command_add_list(create, 'x', "exclude", argx_type_string(), &schema->exclude));
+    TRY(argx_option_set_description(schema->exclude, "Leave out the files that match."));
+    TRY(argx_option_set_value_name(schema->exclude, "PATTERN"));
+    TRY(argx_option_set_separator(schema->exclude, ','));
 
     /* A positional that takes one argument or more. */
     TRY(argx_command_add_positional(create, "file", argx_type_string(), ARGX_ARITY_ONE_OR_MORE,
@@ -455,6 +473,22 @@ static int run_create(const pack_schema_t *schema, const argx_result_t *result)
     printf("create %s, level %" PRId64 " (%s)\n", output, level,
            source_text(argx_result_option_source(result, schema->level)));
     printf("format %s, block size %lu bytes, ratio %.2f\n", formats[format], *block_size, ratio);
+
+    /* A list option is read by index, in the order of the command line. */
+    if (argx_result_option_value_count(result, schema->exclude) > 0)
+    {
+        const char *pattern = NULL;
+
+        printf("exclude");
+        for (i = 0; i < argx_result_option_value_count(result, schema->exclude); ++i)
+        {
+            if (argx_result_option_string_at(result, schema->exclude, i, &pattern))
+            {
+                printf("%s %s", (i == 0) ? "" : ",", pattern);
+            }
+        }
+        printf("\n");
+    }
 
     /*
      * A positional that takes any number of arguments: its values in the

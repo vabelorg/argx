@@ -162,15 +162,46 @@ static bool uses_global_name(const argx_option_t *option)
 }
 
 /*
- * Checks the options of command in definition order, each against three
+ * Whether a default item of option, a list option with a separator, is
+ * empty or contains the separator. Such an item could not be written on a
+ * command line as one item.
+ */
+static bool has_unsplittable_default(const argx_option_t *option)
+{
+    const char separator = argx_option_separator(option);
+    const size_t count = argx_option_default_count(option);
+    size_t index;
+
+    if (separator == '\0')
+    {
+        return false;
+    }
+
+    for (index = 0; index < count; ++index)
+    {
+        const char *text = argx_option_default_at(option, index);
+
+        if ((text[0] == '\0') || (strchr(text, separator) != NULL))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/*
+ * Checks the options of command in definition order, each against four
  * rules, in this order:
  *
  * 1. None of its names is a name of a global option of an ancestor of
  *    command (ARGX_ERROR_NAME_CONFLICT).
- * 2. It is not both required and given a default value
+ * 2. It is not both required and given a default value or default items
  *    (ARGX_ERROR_INVALID_DEFINITION).
- * 3. Its value type accepts its default value, if it has one
- *    (ARGX_ERROR_INVALID_DEFAULT).
+ * 3. A list option with a separator has no default item that is empty or
+ *    contains the separator (ARGX_ERROR_INVALID_DEFINITION).
+ * 4. Its value type accepts its default value or each of its default
+ *    items, in the order they were added (ARGX_ERROR_INVALID_DEFAULT).
  *
  * Stops at the first option that breaks a rule, writes it to *faulty and
  * returns the error code. Returns ARGX_ERROR_OUT_OF_MEMORY, without
@@ -186,8 +217,8 @@ static argx_error_t check_options(const argx_command_t *command, const argx_opti
     for (index = 0; index < count; ++index)
     {
         const argx_option_t *option = argx_command_option_at(command, index);
-        const char *text = argx_option_default(option);
-        argx_error_t error;
+        const size_t default_count = argx_option_default_count(option);
+        size_t item;
 
         if (uses_global_name(option))
         {
@@ -195,27 +226,32 @@ static argx_error_t check_options(const argx_command_t *command, const argx_opti
             return ARGX_ERROR_NAME_CONFLICT;
         }
 
-        /* Only an option that takes a value has a default value. */
-        if (text == NULL)
+        /* Only an option that takes a value has default values. */
+        if (default_count == 0)
         {
             continue;
         }
 
-        if (argx_option_is_required(option))
+        if (argx_option_is_required(option) || has_unsplittable_default(option))
         {
             *faulty = option;
             return ARGX_ERROR_INVALID_DEFINITION;
         }
 
-        error = check_default(argx_option_type(option), text);
-        if (error == ARGX_ERROR_INVALID_DEFAULT)
+        for (item = 0; item < default_count; ++item)
         {
-            *faulty = option;
-        }
+            const argx_error_t error =
+                check_default(argx_option_type(option), argx_option_default_at(option, item));
 
-        if (error != ARGX_ERROR_NONE)
-        {
-            return error;
+            if (error == ARGX_ERROR_INVALID_DEFAULT)
+            {
+                *faulty = option;
+            }
+
+            if (error != ARGX_ERROR_NONE)
+            {
+                return error;
+            }
         }
     }
 

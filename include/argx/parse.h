@@ -97,7 +97,8 @@ typedef enum argx_parse_error_kind
     ARGX_PARSE_ERROR_MISSING_POSITIONAL,    /* A required positional argument was not given. */
     ARGX_PARSE_ERROR_UNEXPECTED_POSITIONAL, /* One positional argument too many. */
     ARGX_PARSE_ERROR_INVALID_ENCODING,      /* A wide argument that cannot be converted to UTF-8. */
-    ARGX_PARSE_ERROR_MISSING_SUBCOMMAND     /* A command line that names no required subcommand. */
+    ARGX_PARSE_ERROR_MISSING_SUBCOMMAND,    /* A command line that names no required subcommand. */
+    ARGX_PARSE_ERROR_EMPTY_ITEM             /* A list option's value with an empty item. */
 } argx_parse_error_kind_t;
 
 /*
@@ -214,10 +215,20 @@ typedef enum argx_parse_error_kind
  *
  * An option may be given more than once, by its short name and its long
  * name alike: a flag stays given, a count is the number of times it was
- * given, a negatable flag has the state given last, and an option that
- * takes a value has the value given last. Each value is converted with its
- * option's value type when it is read, including a value that is replaced
- * later.
+ * given, a negatable flag has the state given last, an option with a value
+ * has the value given last, and a list option has every value given, in
+ * command-line order. Each value is converted with its option's value type
+ * when it is read, including a value that is replaced later.
+ *
+ * A list option with a separator (argx_option_set_separator()) splits each
+ * value at every separator into items, and converts each item on its own.
+ * An empty item is a parse error (ARGX_PARSE_ERROR_EMPTY_ITEM): an empty
+ * value, a separator at the start or the end, or two separators in a row.
+ * Without a separator, a value is one item and is passed to the value type
+ * unchanged, even when it is empty.
+ *
+ *     --keys a,b --keys=c -kd    the items "a", "b", "c" and "d", with ','
+ *     --keys a,,b                ARGX_PARSE_ERROR_EMPTY_ITEM
  *
  * A terminal flag (argx_option_set_terminal()) ends the parse. When one is
  * read, as a long option or as a letter of a bundle, it is recorded as
@@ -249,7 +260,8 @@ typedef enum argx_parse_error_kind
  * checked nor given default values.
  *
  * First, everything required must have been given: an option that takes a
- * value and is required (argx_option_set_required()) must have a value,
+ * value and is required (argx_option_set_required()) must have a value (a
+ * list option, at least one),
  * and a positional with arity ARGX_ARITY_REQUIRED or
  * ARGX_ARITY_ONE_OR_MORE must have at least one value, and the last
  * selected command must not be one whose subcommands are required (see
@@ -261,18 +273,26 @@ typedef enum argx_parse_error_kind
  * Then, if nothing is missing, everything that was not given gets its
  * default value:
  *
- *     an option that takes a value, a positional with arity
+ *     an option with a value, a positional with arity
  *     ARGX_ARITY_OPTIONAL
  *                    with a default value: the default value, converted
  *                    with its value type; its source is
  *                    ARGX_SOURCE_DEFAULT
  *                    without one: no value; its source is
  *                    ARGX_SOURCE_NONE
+ *     a list option  with default items: every default item, in the order
+ *                    they were added, each converted with its value type
+ *                    and not split; its source is ARGX_SOURCE_DEFAULT
+ *                    without any: no item; its source is
+ *                    ARGX_SOURCE_NONE
  *     a positional with arity ARGX_ARITY_ZERO_OR_MORE
  *                    no value: its count is 0
  *     a flag, a count, a negatable flag
  *                    not given, 0, its initial state; the source is
  *                    ARGX_SOURCE_DEFAULT
+ *
+ * A list option that was given at least once gets none of its default
+ * items: they are replaced, not extended.
  *
  * A default value that its value type does not accept is a parse error.
  * Schema validation already checked the default values, so this happens
@@ -477,11 +497,12 @@ ARGX_API size_t argx_result_count(const argx_result_t *result, const argx_option
  *
  * - ARGX_SOURCE_COMMAND_LINE: option was given on the command line.
  * - ARGX_SOURCE_DEFAULT: option was not given, and what result holds
- *   comes from the schema: the default value of an option that takes a
- *   value, the initial state of a negatable flag, "not given" for a flag
- *   and 0 for a count.
- * - ARGX_SOURCE_NONE: an option that takes a value has none, or option
- *   belongs to a command that the command line did not select.
+ *   comes from the schema: the default value of an option with a value,
+ *   the default items of a list option, the initial state of a negatable
+ *   flag, "not given" for a flag and 0 for a count.
+ * - ARGX_SOURCE_NONE: an option that takes a value has none (a list
+ *   option, no item), or option belongs to a command that the command
+ *   line did not select.
  *
  * Preconditions:
  *
@@ -493,7 +514,8 @@ ARGX_API argx_source_t argx_result_option_source(const argx_result_t *result,
                                                  const argx_option_t *option);
 
 /*
- * Read the value of an option that takes a value.
+ * Read the value of an option with a value, ARGX_OPTION_VALUE. To read a
+ * list option, use the functions after these, which take an index.
  *
  * argx_result_option_string(), _int(), _float() and _choice() read a value
  * whose value type is of the kind ARGX_TYPE_STRING, ARGX_TYPE_INT,
@@ -522,7 +544,9 @@ ARGX_API argx_source_t argx_result_option_source(const argx_result_t *result,
  * - result, option and out are not NULL. Checked with assert.
  * - option belongs to the schema that result was made from. Checked with
  *   assert.
- * - option takes a value, ARGX_OPTION_VALUE. Checked with assert.
+ * - option is an option with a value, ARGX_OPTION_VALUE, not a list
+ *   option, so that no value of a list option is left unread. Checked with
+ *   assert.
  * - The value type of the option passed to argx_result_option_string() is
  *   of the kind ARGX_TYPE_STRING; for _int() it is ARGX_TYPE_INT, for
  *   _float() ARGX_TYPE_FLOAT and for _choice() ARGX_TYPE_CHOICE.
@@ -538,6 +562,70 @@ ARGX_API bool argx_result_option_choice(const argx_result_t *result, const argx_
                                         size_t *out);
 ARGX_API const void *argx_result_option_value(const argx_result_t *result,
                                               const argx_option_t *option);
+
+/*
+ * Read the values of an option that takes a value, ARGX_OPTION_VALUE or
+ * ARGX_OPTION_LIST, by index.
+ *
+ * argx_result_option_value_count() returns how many values option has:
+ * for a list option, the number of items, from the command line or from
+ * its default items; for an option with a value, 0 or 1.
+ *
+ * The other functions read the value at index, counted from 0 in
+ * command-line order (for default items, the order they were added), the
+ * way the functions above read an option's value:
+ * argx_result_option_string_at(), _int_at(), _float_at() and _choice_at()
+ * write the value to *out and return true, and
+ * argx_result_option_value_at() returns a pointer to the area that holds
+ * the value, for value types of every kind. For an option with a value,
+ * index 0 is its value. If there is no value at index, that is, if index
+ * is not less than argx_result_option_value_count(), they return false and
+ * leave *out unchanged, or return NULL. That is not a precondition
+ * violation.
+ *
+ * argx_result_option_arg_index() returns the index in argv of the
+ * argument that holds the text of the value at index: the argument after
+ * the option's name for "--name value", and the option's own argument for
+ * "--name=value" and "-nvalue". The items split from one value share one
+ * index. It returns 0 for a default value and when there is no value at
+ * index; argv[0], the program name, is never a value. Comparing the
+ * indexes of different options and positionals gives the order in which
+ * their values were given.
+ *
+ * An option of a command that the command line did not select has no
+ * value: its count is 0.
+ *
+ * A string and the area are valid until result is destroyed. Do not free
+ * or modify them.
+ *
+ * Preconditions:
+ *
+ * - result, option and out are not NULL. Checked with assert.
+ * - option belongs to the schema that result was made from. Checked with
+ *   assert.
+ * - option takes a value, ARGX_OPTION_VALUE or ARGX_OPTION_LIST. Checked
+ *   with assert.
+ * - The value type of the option passed to argx_result_option_string_at()
+ *   is of the kind ARGX_TYPE_STRING; for _int_at() it is ARGX_TYPE_INT,
+ *   for _float_at() ARGX_TYPE_FLOAT and for _choice_at()
+ *   ARGX_TYPE_CHOICE. Checked with assert.
+ */
+ARGX_API size_t argx_result_option_value_count(const argx_result_t *result,
+                                               const argx_option_t *option);
+ARGX_API bool argx_result_option_string_at(const argx_result_t *result,
+                                           const argx_option_t *option, size_t index,
+                                           const char **out);
+ARGX_API bool argx_result_option_int_at(const argx_result_t *result, const argx_option_t *option,
+                                        size_t index, int64_t *out);
+ARGX_API bool argx_result_option_float_at(const argx_result_t *result, const argx_option_t *option,
+                                          size_t index, double *out);
+ARGX_API bool argx_result_option_choice_at(const argx_result_t *result,
+                                           const argx_option_t *option, size_t index,
+                                           size_t *out);
+ARGX_API const void *argx_result_option_value_at(const argx_result_t *result,
+                                                 const argx_option_t *option, size_t index);
+ARGX_API size_t argx_result_option_arg_index(const argx_result_t *result,
+                                             const argx_option_t *option, size_t index);
 
 /*
  * Read the values of a positional.
@@ -558,6 +646,11 @@ ARGX_API const void *argx_result_option_value(const argx_result_t *result,
  * that is, if index is not less than argx_result_positional_count(), they
  * return false and leave *out unchanged, or return NULL. That is not a
  * precondition violation.
+ *
+ * argx_result_positional_arg_index() returns the index in argv of the
+ * argument that is the value at index, the same way
+ * argx_result_option_arg_index() does for an option: 0 for a default value
+ * and when there is no value at index.
  *
  * A positional of a command that the command line did not select has no
  * value: its count is 0 and its source is ARGX_SOURCE_NONE.
@@ -593,6 +686,9 @@ ARGX_API bool argx_result_positional_choice(const argx_result_t *result,
                                             size_t *out);
 ARGX_API const void *argx_result_positional_value(const argx_result_t *result,
                                                   const argx_positional_t *positional, size_t index);
+ARGX_API size_t argx_result_positional_arg_index(const argx_result_t *result,
+                                                 const argx_positional_t *positional,
+                                                 size_t index);
 
 /*
  * Read a result's parse error: what is wrong with a command line that did
@@ -607,7 +703,9 @@ ARGX_API const void *argx_result_positional_value(const argx_result_t *result,
  * argx_result_error_argument() returns the whole argument that is wrong,
  * such as "--level=x" or the bundle "-vx".
  * argx_result_error_value() returns the value that is wrong: the part of
- * the argument that is the value, or the schema's default value.
+ * the argument that is the value, the schema's default value, or, for an
+ * item of a list option that its value type does not take, that item
+ * alone.
  * argx_result_error_source() and argx_result_error_index() return where
  * the error is. For ARGX_SOURCE_COMMAND_LINE, the index is the argument's
  * index in the argv that was parsed (argv[0] has index 0). For
@@ -640,8 +738,11 @@ ARGX_API const void *argx_result_positional_value(const argx_result_t *result,
  *     UNEXPECTED_POSITIONAL   yes       yes    no
  *     INVALID_ENCODING        yes       yes    no
  *     MISSING_SUBCOMMAND      no        no     no
+ *     EMPTY_ITEM              yes       yes    the option (**)
  *
  *     (*) Not when the value is a default value of the schema.
+ *     (**) The value is the whole value that has the empty item, such as
+ *          "a,,b"; the argument is the one that holds it.
  *
  * A result without a parse error returns "none" from all of them:
  * ARGX_PARSE_ERROR_NONE, NULL, ARGX_SOURCE_NONE, 0 and '\0'.

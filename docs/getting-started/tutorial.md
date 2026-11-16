@@ -220,6 +220,7 @@ for (i = 0; i < argx_result_positional_count(result, schema->files); ++i)
 ```
 
 - Use the function that matches the value type: `_string`, `_int`, `_float`, `_choice`, or `_value` for a user-defined type.
+- A list option, such as `--exclude`, keeps every value it is given. Read it like a positional, by index, with `argx_result_option_value_count` and `argx_result_option_string_at` and the other `_at` functions ([List options](../references/parse.md#list-options)).
 - `argx_result_command` tells which subcommand to run. The root's subcommands are required, so after a parse that succeeded it is `create` or `list`.
 
 ## 7. Destroy

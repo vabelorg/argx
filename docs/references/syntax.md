@@ -35,11 +35,11 @@ Long options are matched against long and negated names; each character of a bun
 
 | Form | Kind of option | Behavior |
 | --- | --- | --- |
-| `--name=value` | With a value | The text after `=` is the value (may be empty) |
-| `--name` | With a value | The next element is the value, whatever it is; `MISSING_VALUE` if none |
+| `--name=value` | With a value, list | The text after `=` is the value (may be empty) |
+| `--name` | With a value, list | The next element is the value, whatever it is; `MISSING_VALUE` if none |
 | `--name=value`, `--no-name=value` | Flag, negatable flag, count | `UNEXPECTED_VALUE` |
-| `-ovalue` | With a value | The rest of the bundle is the value |
-| `-o` last in the bundle | With a value | The next element is the value; `MISSING_VALUE` if none |
+| `-ovalue` | With a value, list | The rest of the bundle is the value |
+| `-o` last in the bundle | With a value, list | The next element is the value; `MISSING_VALUE` if none |
 | `--name`, `-n` | Flag | Given |
 | `--name`, `-n` | Count | Count goes up by 1 |
 | `--name`, `-n` | Negatable flag | On |
@@ -49,6 +49,25 @@ Long options are matched against long and negated names; each character of a bun
 - The value of `--name=a=b` is `a=b`, and of `-o=value` is `=value`.
 - Values are passed to the value type unchanged, white space included ([Accepted input](types.md#accepted-input)).
 - In `-a-b` and `-a=1`, `-` and `=` are matched as short names, giving `unknown option '--'` and `unknown option '-='`.
+- A list option takes one value per occurrence. `--keys a b` gives `--keys` the value `a`, and `b` is an operand.
+
+## Splitting list values
+
+A list option with a separator (`argx_option_set_separator`, [Attributes](schema.md#attributes)) splits each value at every separator into items. Each item is converted on its own, with the option's value type, and keeps the index of the element that held the value.
+
+| Value (separator `,`) | Items |
+| --- | --- |
+| `a,b,c` | `a`, `b`, `c` |
+| `a` | `a` |
+| ` a , b ` | ` a `, ` b ` (blanks are kept, as for every value) |
+| `a,,b`, `,a`, `a,`, `,`, empty | `EMPTY_ITEM` |
+
+- **An empty item is a parse error,** `EMPTY_ITEM`, with the whole value as its value ([Parse errors](parse.md#parse-errors)). An empty value is one too.
+- There is no escape: an item cannot contain the separator.
+- An item that the value type rejects is `INVALID_VALUE`, with that item as its value. No item of that value is kept.
+- **Without a separator,** a value is one item and is passed to the value type unchanged, even when it is empty or holds commas.
+- The separator is any of the 32 ASCII punctuation characters, whatever the locale. `-` and `=` work, but `--keys=-a` with `-`, or `-k=a` with `=`, starts with an empty item.
+- Default items are never split.
 
 ## Repeated options
 
@@ -58,8 +77,11 @@ Long options are matched against long and negated names; each character of a bun
 | Count | The number of times (`-v --verbose -vv` is 4) |
 | Negatable flag | The last one (`--color --no-color` is off) |
 | With a value | The last value (`--out a --out b` is `b`) |
+| List | Every value, in command-line order (`--keys a -kb --keys=c` is `a`, `b`, `c`) |
 
 Every value is converted as it is read, so `--num x --num 5` is a parse error.
+
+A list option mixes every form freely, bundles included (`-vka` gives `-v`, then `a` to `-k`). Its values are collected in the order the elements appear, and the items split from one value stay together in their order.
 
 ## Assigning positionals
 
@@ -88,7 +110,7 @@ pack --quiet list x                    --quiet, global on list, is not known on 
 ```
 
 - **One option, one handle.** Wherever it is given, it is the option of the command that defines it, read with the handle that `argx_command_add_*` wrote. Nothing is copied into the descendants.
-- **Repeats add up across commands,** by the rules of [Repeated options](#repeated-options): a count counts every occurrence, and the last value or state wins.
+- **Repeats add up across commands,** by the rules of [Repeated options](#repeated-options): a count counts every occurrence, a list option collects every value in command-line order (`tool -k a build -k b` is `a`, `b`), and for the others the last value or state wins.
 - **Its required check and default value belong to its command,** in the [order](#required-checks-and-default-values) of that command. A required global option may be given after the name of any descendant.
 - **A parse error about it is found in the current command.** `argx_result_error_command` returns the command being read, which is a descendant when the option was given there, and `argx_result_error_option` returns the global option ([Parse errors](parse.md#parse-errors)).
 - **Its names are reserved below its command.** No option of a descendant may use its short, long or negated name; validation reports such an option as `ARGX_ERROR_NAME_CONFLICT` ([Validation](schema.md#validation)). So in a validated schema a name is known in a command through one option at most.
@@ -98,10 +120,11 @@ pack --quiet list x                    --quiet, global on list, is not known on 
 
 After the last element is read without a parse error, for the selected commands only. A parse that a [terminal flag](parse.md#terminal-flags) ended skips both steps.
 
-1. **Required checks.** A required option with a value that has no value, or a positional of `ARGX_ARITY_REQUIRED` or `ARGX_ARITY_ONE_OR_MORE` with no value, is `MISSING_OPTION` or `MISSING_POSITIONAL`. A last selected command whose subcommands are required is `MISSING_SUBCOMMAND`. The first one is reported: commands nearer the root first, then options before positionals, in the order added, and the missing subcommand after all of them. If the root of `tool` requires `--token` and a subcommand, `tool` alone reports `--token`, and `tool --token x` the subcommand.
-2. **Default values,** if nothing is missing. An option with a value or an `ARGX_ARITY_OPTIONAL` positional that was not given gets its converted default, with the source `ARGX_SOURCE_DEFAULT`.
+1. **Required checks.** A required option with a value that has no value, a required list option that was not given, or a positional of `ARGX_ARITY_REQUIRED` or `ARGX_ARITY_ONE_OR_MORE` with no value, is `MISSING_OPTION` or `MISSING_POSITIONAL`. A last selected command whose subcommands are required is `MISSING_SUBCOMMAND`. The first one is reported: commands nearer the root first, then options before positionals, in the order added, and the missing subcommand after all of them. If the root of `tool` requires `--token` and a subcommand, `tool` alone reports `--token`, and `tool --token x` the subcommand.
+2. **Default values,** if nothing is missing. An option with a value or an `ARGX_ARITY_OPTIONAL` positional that was not given gets its converted default, with the source `ARGX_SOURCE_DEFAULT`. A list option that was not given gets each of its default items, in the order they were added, converted and not split.
 
-- Without a default, such an item has no value (`ARGX_SOURCE_NONE`); a `ARGX_ARITY_ZERO_OR_MORE` positional has 0 values.
+- **A list option that was given gets no default item:** the defaults are replaced, not extended. `--include x` with the default `/usr/include` is `x` alone.
+- Without a default, such an item has no value (`ARGX_SOURCE_NONE`); a list option and a `ARGX_ARITY_ZERO_OR_MORE` positional have 0 values.
 - A flag not given is not given, a count is 0, and a negatable flag has its initial state (`argx_option_set_initial`), all with `ARGX_SOURCE_DEFAULT`.
 - Values come only from the command line and defaults, never from the environment.
 - A failed default conversion is `INVALID_VALUE`. Validation already checked the defaults, so only a user-defined value type that answers inconsistently can cause it.

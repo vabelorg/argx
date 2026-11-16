@@ -67,6 +67,16 @@ A value type is a size, a conversion function and a release function. The caller
 - **Cost:** values are passed as `void *`, so the compiler does not check their type.
 - **Rules:** [User-defined value types](../references/types.md#user-defined-value-types).
 
+## An option that collects values is a kind of its own
+
+An option that keeps every value it is given is the kind `ARGX_OPTION_LIST`, not an attribute of an option with a value. What changes the shape of the result and the functions that read it is a kind, chosen when the option is added, as for a count or a positional's arity. What changes how text becomes values, or how values are checked, is an attribute: the separator, the value name, the defaults, required.
+
+- **Why:** an attribute would allow states that need extra rules, such as one default value set before the option became a list, and code that reads the option without an index would silently drop values. With a kind, such a read is a precondition violation that `assert` reports.
+- **Why defaults are replaced:** a list given on the command line gets none of its default items. Appending to the defaults, as some parsers do, surprises users who expect `--include x` to mean only `x`.
+- **Why the help shows `[repeatable]`:** `--keys <KEY>...` would read as `--keys a b c`, since `<name>...` means several elements for a positional, and a list option takes one element per occurrence. So the heading shows one occurrence, and the annotation says it can be repeated.
+- **Cost:** two more ways to read an option's values, with and without an index.
+- **Rules:** [Options](../references/schema.md#options), [Repeated options](../references/syntax.md#repeated-options), [List options](../references/parse.md#list-options).
+
 ## Everything in a schema can be read back
 
 Every attribute of a schema has a public reading function.

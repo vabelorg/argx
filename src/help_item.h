@@ -56,6 +56,9 @@ void argx_help_item_string(argx_out_t *out, const char *text);
  * - an option with a value: a blank and the value name between "<" and
  *   ">". When no value name is set, the value type name stands in its
  *   place.
+ * - a list option: as an option with a value. With a separator, the value
+ *   is followed by "[", the separator, the value again and "...]", as in
+ *   "<KEY>[,<KEY>...]".
  *
  * An unknown kind is written as a flag.
  */
@@ -73,10 +76,11 @@ void argx_help_item_positional_heading(argx_out_t *out, const argx_positional_t 
  * Writes option as a required option appears in a usage line: "--" and
  * the long name, or "-" and the short name when it has no long name, then
  * a blank and the value name between "<" and ">". When no value name is
- * set, the value type name stands in its place.
+ * set, the value type name stands in its place. A list option's value is
+ * written as in its heading.
  *
- * Preconditions: option takes a value, ARGX_OPTION_VALUE. Checked with
- * assert.
+ * Preconditions: option takes a value, ARGX_OPTION_VALUE or
+ * ARGX_OPTION_LIST. Checked with assert.
  */
 void argx_help_item_usage_option(argx_out_t *out, const argx_option_t *option);
 
@@ -102,10 +106,13 @@ argx_error_t argx_help_item_text_append(argx_vec_t *text, const char *part, size
  *     kind ARGX_TYPE_CHOICE. The choices appear in the order they were
  *     defined, separated by ", ".
  *  2. "[default: VALUE]": option takes a value and has a default value;
- *     VALUE is the string that was set, unchanged. "[default: on]": option
- *     is a negatable flag whose initial state is on. A negatable flag
- *     whose initial state is off has no annotation.
- *  3. "[required]": option takes a value and is required.
+ *     VALUE is the string that was set, unchanged. For a list option with
+ *     default items, VALUE is the items in the order they were added,
+ *     separated by ", ". "[default: on]": option is a negatable flag whose
+ *     initial state is on. A negatable flag whose initial state is off has
+ *     no annotation.
+ *  3. "[repeatable]": option is a list option.
+ *  4. "[required]": option takes a value and is required.
  *
  * One blank precedes each annotation unless text is empty or ends with a
  * newline. So one blank separates the first annotation from a description
