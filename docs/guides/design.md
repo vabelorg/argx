@@ -15,7 +15,7 @@ Parsing and help generation print nothing, never end the process and read no env
 The library defines no option of its own. `--help` is a flag that the program adds and reads like any other. Made terminal, it ends the parse with success, so a command line that asks only for the help is not a parse error although it leaves out what is required.
 
 - **Why:** the library does not print, so it cannot answer `--help` itself. The program also chooses the names and where the help goes. A terminal flag keeps that rule: the library still prints nothing and ends no process, and only stops reading.
-- **Cost:** the program defines `--help` on every command and makes each one terminal. A success that a terminal flag ended has nothing required checked and no default applied, so the program checks the flag before it reads the rest.
+- **Cost:** the program defines `--help` and makes it terminal, and global so that one definition on the root answers on every command. A success that a terminal flag ended has nothing required checked and no default applied, so the program checks the flag before it reads the rest.
 - **Rules:** [Terminal flags](../references/parse.md#terminal-flags), [`--help`](../references/parse.md#--help).
 
 ## A schema is validated before it is used

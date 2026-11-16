@@ -6,7 +6,7 @@ Why ArgX behaves as it does. For step-by-step tasks, see [How-to](how-to.md).
 
 ### Why is `--help` an unknown option after a subcommand?
 
-An option is recognized only on the command that defines it, and the library adds no `--help` of its own. Define `--help` on every command ([`--help`](../references/parse.md#--help)).
+An option is recognized only on the command that defines it, unless it is global, and the library adds no `--help` of its own. Make the `--help` of the root global with `argx_option_set_global`: every subcommand then knows it ([`--help`](../references/parse.md#--help), [Global options](../references/syntax.md#global-options)).
 
 ### Why does `pack create --help` report a missing required option?
 
@@ -18,7 +18,11 @@ Subcommands are required by default, as most programs with subcommands expect, a
 
 ### Where do I write an option: before or after the subcommand?
 
-After the name of the command that defines it. Subcommands do not inherit their parent's options ([Subcommands](../references/syntax.md#subcommands)).
+After the name of the command that defines it. A [global option](../references/syntax.md#global-options) may also go after the name of any subcommand below that command; other options are not known there ([Subcommands](../references/syntax.md#subcommands)).
+
+### Why does validation report a name conflict between two commands?
+
+A subcommand has an option with a name of a global option of one of its ancestors. A global option is known on every command below its own, so the same name there would be ambiguous. Rename one of the two options, or make the ancestor's option not global ([Global options](../references/syntax.md#global-options)).
 
 ### What happens when an option is given more than once?
 

@@ -105,6 +105,7 @@ static argx_option_t *new_option(argx_command_t *command, argx_option_kind_t kin
     option->required = false;
     option->initial = false;
     option->terminal = false;
+    option->global = false;
 
     if (long_name != NULL)
     {
@@ -344,6 +345,17 @@ argx_error_t argx_option_set_terminal(argx_option_t *option, bool terminal)
     return ARGX_ERROR_NONE;
 }
 
+argx_error_t argx_option_set_global(argx_option_t *option, bool global)
+{
+    assert(option != NULL);
+
+    /* Every kind can be global, so nothing can fail. */
+    option->global = global;
+    argx_schema_touch(option->command);
+
+    return ARGX_ERROR_NONE;
+}
+
 /* ---- Reading ------------------------------------------------------------ */
 
 const argx_command_t *argx_option_command(const argx_option_t *option)
@@ -428,4 +440,11 @@ bool argx_option_is_terminal(const argx_option_t *option)
     assert(option != NULL);
 
     return option->terminal;
+}
+
+bool argx_option_is_global(const argx_option_t *option)
+{
+    assert(option != NULL);
+
+    return option->global;
 }

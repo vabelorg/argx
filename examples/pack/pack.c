@@ -7,8 +7,8 @@
  *
  *   1. creates a choice value type and a user-defined value type;
  *   2. defines the schema: every kind of option, positionals, subcommands,
- *      descriptions and a summary for the help, and a terminal -h, --help on
- *      every command;
+ *      descriptions and a summary for the help, global options that every
+ *      command knows, and a terminal -h, --help among them;
  *   3. validates it, and tells which definition a failed validation points to;
  *   4. parses argv and branches on the error code, and on whether --help
  *      ended the parse;
@@ -29,9 +29,13 @@
  *
  * It accepts command lines of this form:
  *
- *   pack [-h] [-v]... [-q] [--color | --no-color] create [-h] -o FILE
- *        [-l LEVEL] [--ratio RATIO] [--format tar|zip] [--block-size SIZE] file...
- *   pack [-h] [-v]... [-q] [--color | --no-color] list [-h] archive [pattern]
+ *   pack [GLOBAL]... create [GLOBAL]... -o FILE [-l LEVEL] [--ratio RATIO]
+ *        [--format tar|zip] [--block-size SIZE] file...
+ *   pack [GLOBAL]... list [GLOBAL]... archive [pattern]
+ *
+ * where GLOBAL is one of the global options -h, -v, -q, --color and
+ * --no-color: they are defined once, on pack, and can be given before or
+ * after the name of the subcommand.
  *
  * Example runs (the "$" lines are the input, and the lines after them are
  * the output):
@@ -51,6 +55,10 @@
  *
  *   $ pack list out.tar
  *   verbose: 0, color: on
+ *   list out.tar, pattern * (default)
+ *
+ *   $ pack -v list --no-color -v out.tar
+ *   verbose: 2, color: off
  *   list out.tar, pattern * (default)
  *
  *   $ pack create a.txt
@@ -110,9 +118,10 @@ typedef struct pack_schema
     argx_command_t *root;           /* pack */
     argx_command_t *create;         /* pack create */
     argx_command_t *list;           /* pack list */
-    argx_option_t *verbose;         /* pack: -v, --verbose; a count */
-    argx_option_t *quiet;           /* pack: -q, --quiet; a flag */
-    argx_option_t *color;           /* pack: --color, --no-color; on if not given */
+    argx_option_t *help;            /* pack, global: -h, --help; a terminal flag */
+    argx_option_t *verbose;         /* pack, global: -v, --verbose; a count */
+    argx_option_t *quiet;           /* pack, global: -q, --quiet; a flag */
+    argx_option_t *color;           /* pack, global: --color, --no-color; on if not given */
     argx_option_t *output;          /* create: -o, --output FILE; required */
     argx_option_t *level;           /* create: -l, --level LEVEL; 6 if not given */
     argx_option_t *ratio;           /* create: --ratio RATIO; 0.5 if not given */
@@ -191,26 +200,10 @@ static argx_error_t create_types(pack_schema_t *schema, size_limit_t *limit)
 }
 
 /*
- * Adds -h, --help to command. The library adds no such option by itself, and
- * an option is only known where its command is the current command, so
- * every command gets its own. It is terminal: reading it ends the parse,
- * which then succeeds, so "pack --help" and "pack create --help" are not
- * parse errors although they leave out what is required.
- */
-static argx_error_t add_help(argx_command_t *command)
-{
-    argx_option_t *option = NULL;
-    argx_error_t error;
-
-    TRY(argx_command_add_flag(command, 'h', "help", &option));
-    TRY(argx_option_set_description(option, "Print this help."));
-    return argx_option_set_terminal(option, true);
-}
-
-/*
- * The root: its options stand in front of the subcommand. A command line
- * must name one of its subcommands; that is the default, so nothing is set
- * for it.
+ * The root: its options are global, so pack and each of its subcommands know
+ * them, and they are read with one handle wherever they were given. A
+ * command line must name one of its subcommands; that is the default, so
+ * nothing is set for it.
  */
 static argx_error_t define_root(pack_schema_t *schema)
 {
@@ -218,20 +211,33 @@ static argx_error_t define_root(pack_schema_t *schema)
 
     TRY(argx_command_create("pack", &schema->root));
     TRY(argx_command_set_description(schema->root, "Pack files into an archive."));
-    TRY(add_help(schema->root));
 
-    /* A count: -v, -vv, --verbose. */
+    /*
+     * -h, --help. The library adds no such option by itself. It is terminal:
+     * reading it ends the parse, which then succeeds, so "pack --help" and
+     * "pack create --help" are not parse errors although they leave out what
+     * is required. It is global, so one definition serves every command.
+     */
+    TRY(argx_command_add_flag(schema->root, 'h', "help", &schema->help));
+    TRY(argx_option_set_description(schema->help, "Print this help."));
+    TRY(argx_option_set_terminal(schema->help, true));
+    TRY(argx_option_set_global(schema->help, true));
+
+    /* A count: -v, -vv, --verbose. "pack -v create -v" counts 2. */
     TRY(argx_command_add_count(schema->root, 'v', "verbose", &schema->verbose));
     TRY(argx_option_set_description(schema->verbose, "Print more; can be repeated."));
+    TRY(argx_option_set_global(schema->verbose, true));
 
     /* A flag: -q, --quiet. */
     TRY(argx_command_add_flag(schema->root, 'q', "quiet", &schema->quiet));
     TRY(argx_option_set_description(schema->quiet, "Print nothing."));
+    TRY(argx_option_set_global(schema->quiet, true));
 
     /* A negatable flag that is on unless --no-color is given. */
     TRY(argx_command_add_negatable(schema->root, '\0', "color", &schema->color));
     TRY(argx_option_set_description(schema->color, "Color the output."));
-    return argx_option_set_initial(schema->color, true);
+    TRY(argx_option_set_initial(schema->color, true));
+    return argx_option_set_global(schema->color, true);
 }
 
 /* The subcommand create: options with a value of each kind of value type. */
@@ -243,7 +249,6 @@ static argx_error_t define_create(pack_schema_t *schema)
     TRY(argx_command_add_subcommand(schema->root, "create", &schema->create));
     create = schema->create;
     TRY(argx_command_set_description(create, "Create an archive."));
-    TRY(add_help(create));
 
     /* A required string. */
     TRY(argx_command_add_value(create, 'o', "output", argx_type_string(), &schema->output));
@@ -297,7 +302,6 @@ static argx_error_t define_list(pack_schema_t *schema)
     TRY(argx_command_set_description(schema->list,
                                      "Print the names of the files in an archive that match a "
                                      "pattern, one per line."));
-    TRY(add_help(schema->list));
 
     TRY(argx_command_add_positional(schema->list, "archive", argx_type_string(),
                                     ARGX_ARITY_REQUIRED, &schema->archive));
@@ -498,7 +502,10 @@ static int run(const pack_schema_t *schema, const argx_result_t *result)
         return EXIT_SUCCESS;
     }
 
-    /* The options of the root: a count and a negatable flag. */
+    /*
+     * The global options of the root: a count and a negatable flag, given
+     * before or after the name of the subcommand.
+     */
     printf("verbose: %lu, color: %s\n", (unsigned long)argx_result_count(result, schema->verbose),
            argx_result_flag(result, schema->color) ? "on" : "off");
 

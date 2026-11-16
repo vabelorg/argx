@@ -106,8 +106,77 @@ static void help_write_path(argx_out_t *out, const argx_command_t *command)
 }
 
 /*
+ * A position among the global options that a command inherits: those of
+ * its ancestors, from the root down, each ancestor's in the order they
+ * were added. The command's own options are not among them, global or
+ * not.
+ *
+ * - command: the command whose inherited global options are iterated.
+ * - distance: how many levels above the command the ancestor is; 0 when
+ *   the iteration is over.
+ * - index: the index of the next option of that ancestor to look at.
+ */
+typedef struct help_global_iter
+{
+    const argx_command_t *command;
+    size_t distance;
+    size_t index;
+} help_global_iter_t;
+
+/* Starts an iteration over the global options that command inherits. */
+static void help_global_iter_init(help_global_iter_t *iter, const argx_command_t *command)
+{
+    const argx_command_t *ancestor;
+
+    iter->command = command;
+    iter->distance = 0;
+    iter->index = 0;
+    for (ancestor = argx_command_parent(command); ancestor != NULL;
+         ancestor = argx_command_parent(ancestor))
+    {
+        ++iter->distance;
+    }
+}
+
+/*
+ * Returns the next global option of the iteration, or NULL when there is
+ * none left. Nothing is allocated: each ancestor is found by walking the
+ * parent chain again from the command.
+ */
+static const argx_option_t *help_global_iter_next(help_global_iter_t *iter)
+{
+    while (iter->distance != 0)
+    {
+        const argx_command_t *ancestor = iter->command;
+        size_t step;
+
+        for (step = 0; step < iter->distance; ++step)
+        {
+            ancestor = argx_command_parent(ancestor);
+        }
+
+        while (iter->index < argx_command_option_count(ancestor))
+        {
+            const argx_option_t *option = argx_command_option_at(ancestor, iter->index);
+
+            ++iter->index;
+            if (argx_option_is_global(option))
+            {
+                return option;
+            }
+        }
+
+        --iter->distance;
+        iter->index = 0;
+    }
+
+    return NULL;
+}
+
+/*
  * Returns whether command has an option that is not required: one that
- * takes no value, or one whose value need not be given.
+ * takes no value, or one whose value need not be given. The global
+ * options that command inherits count too.
  */
 static bool help_has_optional_option(const argx_command_t *command)
 {
@@ -119,6 +188,20 @@ static bool help_has_optional_option(const argx_command_t *command)
         if (!argx_option_is_required(argx_command_option_at(command, index)))
         {
             return true;
+        }
+    }
+
+    {
+        help_global_iter_t iter;
+        const argx_option_t *option;
+
+        help_global_iter_init(&iter, command);
+        while ((option = help_global_iter_next(&iter)) != NULL)
+        {
+            if (!argx_option_is_required(option))
+            {
+                return true;
+            }
         }
     }
 
@@ -280,7 +363,9 @@ static void help_usage_add(help_context_t *context, const help_usage_item_t *ite
  * Writes the usage line of context's command, including the newline that
  * ends it. The items, in order: "Usage: " and the command path,
  * "[OPTIONS]", the required options, the positionals and "<COMMAND>" or
- * "[COMMAND]".
+ * "[COMMAND]". "[OPTIONS]" also stands for the global options that the
+ * command inherits; the required ones among them are not written: like
+ * every option of an ancestor, they belong to the ancestor's usage.
  * The line is broken between two items where it would exceed the width;
  * no item is split.
  */
@@ -362,7 +447,7 @@ typedef enum help_heading_kind
 {
     HELP_HEADING_SUBCOMMAND, /* an item of "Commands:" */
     HELP_HEADING_POSITIONAL, /* an item of "Arguments:" */
-    HELP_HEADING_OPTION      /* an item of "Options:" */
+    HELP_HEADING_OPTION      /* an item of "Options:" or "Global options:" */
 } help_heading_kind_t;
 
 /*
@@ -439,15 +524,15 @@ static help_heading_t help_positional_heading(const argx_command_t *command, siz
     return heading;
 }
 
-/* Returns the heading of command's option at index. */
-static help_heading_t help_option_heading(const argx_command_t *command, size_t index)
+/* Returns the heading of option. */
+static help_heading_t help_option_heading(const argx_option_t *option)
 {
     help_heading_t heading;
 
     heading.kind = HELP_HEADING_OPTION;
     heading.subcommand = NULL;
     heading.positional = NULL;
-    heading.option = argx_command_option_at(command, index);
+    heading.option = option;
 
     return heading;
 }
@@ -512,11 +597,27 @@ static size_t help_description_column(const help_context_t *context)
     count = argx_command_option_count(command);
     for (index = 0; index < count; ++index)
     {
-        heading = help_option_heading(command, index);
+        heading = help_option_heading(argx_command_option_at(command, index));
         width = help_heading_width(&heading);
         if (width > widest)
         {
             widest = width;
+        }
+    }
+
+    {
+        help_global_iter_t iter;
+        const argx_option_t *option;
+
+        help_global_iter_init(&iter, command);
+        while ((option = help_global_iter_next(&iter)) != NULL)
+        {
+            heading = help_option_heading(option);
+            width = help_heading_width(&heading);
+            if (width > widest)
+            {
+                widest = width;
+            }
         }
     }
 
@@ -833,10 +934,37 @@ static argx_error_t help_write_arguments(help_context_t *context)
 }
 
 /*
+ * Writes one option item: the option's whole description followed by its
+ * annotations.
+ *
+ * Returns ARGX_ERROR_OUT_OF_MEMORY when an allocation for the cell text
+ * fails; nothing is written then.
+ */
+static argx_error_t help_write_option_item(help_context_t *context, const argx_option_t *option)
+{
+    help_heading_t heading = help_option_heading(option);
+    argx_error_t error = help_cell_start(context, argx_option_description(option));
+
+    if (error == ARGX_ERROR_NONE)
+    {
+        error = argx_help_item_option_notes(&context->text, option);
+    }
+
+    if (error != ARGX_ERROR_NONE)
+    {
+        return error;
+    }
+
+    help_write_cell_item(context, &heading);
+
+    return ARGX_ERROR_NONE;
+}
+
+/*
  * Writes the option list of context's command, when it has any: the
- * command's own options, not those of its parent or its subcommands, in
- * the order they were added, each with its whole description followed by
- * its annotations. Nothing is listed that the schema does not have.
+ * command's own options, global or not, in the order they were added.
+ * The options of its parent and its subcommands are not listed here.
+ * Nothing is listed that the schema does not have.
  *
  * Returns ARGX_ERROR_OUT_OF_MEMORY when an allocation for the cell text
  * fails; the list ends before the item it was for.
@@ -855,20 +983,47 @@ static argx_error_t help_write_options(help_context_t *context)
     help_write_title(context, "Options:");
     for (index = 0; (index < count) && !argx_out_failed(&context->out); ++index)
     {
-        help_heading_t heading = help_option_heading(command, index);
-        argx_error_t error = help_cell_start(context, argx_option_description(heading.option));
-
-        if (error == ARGX_ERROR_NONE)
-        {
-            error = argx_help_item_option_notes(&context->text, heading.option);
-        }
+        argx_error_t error = help_write_option_item(context, argx_command_option_at(command, index));
 
         if (error != ARGX_ERROR_NONE)
         {
             return error;
         }
+    }
 
-        help_write_cell_item(context, &heading);
+    return ARGX_ERROR_NONE;
+}
+
+/*
+ * Writes the global option list of context's command, when it inherits
+ * any: the global options of its ancestors, from the root down, each
+ * ancestor's in the order they were added (help_global_iter_next()).
+ *
+ * Returns ARGX_ERROR_OUT_OF_MEMORY when an allocation for the cell text
+ * fails; the list ends before the item it was for.
+ */
+static argx_error_t help_write_global_options(help_context_t *context)
+{
+    help_global_iter_t iter;
+    const argx_option_t *option;
+    bool started = false;
+
+    help_global_iter_init(&iter, context->command);
+    while (!argx_out_failed(&context->out) && ((option = help_global_iter_next(&iter)) != NULL))
+    {
+        argx_error_t error;
+
+        if (!started)
+        {
+            help_write_title(context, "Global options:");
+            started = true;
+        }
+
+        error = help_write_option_item(context, option);
+        if (error != ARGX_ERROR_NONE)
+        {
+            return error;
+        }
     }
 
     return ARGX_ERROR_NONE;
@@ -897,6 +1052,10 @@ argx_error_t argx_help_write(const argx_command_t *command,
     if (error == ARGX_ERROR_NONE)
     {
         error = help_write_options(&context);
+    }
+    if (error == ARGX_ERROR_NONE)
+    {
+        error = help_write_global_options(&context);
     }
 
     /*

@@ -122,7 +122,7 @@ Columns are the functions without `argx_result_error_`; sources are without `ARG
 
 - `argument` is the whole element, the whole bundle for a bundle error, or the separate value element (`--jobs many`).
 - `index` is the position of `argument` in argv, or 0 unless `source` is `COMMAND_LINE`.
-- `command` is the current command when the error was found, the owner of a missing or default item, or for `MISSING_SUBCOMMAND` the command whose subcommand is missing. Never `NULL` on a parse error.
+- `command` is the current command when the error was found, the owner of a missing or default item, or for `MISSING_SUBCOMMAND` the command whose subcommand is missing. Never `NULL` on a parse error. For a [global option](syntax.md#global-options) given after the name of a descendant, the current command is that descendant, not the option's command.
 - Exactly one of `option` and `positional` is set when the error concerns one.
 - `short_name` is set for any short option, including a lone `-n`, and `'\0'` for long options.
 - Strings live until the result is destroyed; handles belong to the schema.
@@ -161,7 +161,7 @@ When a terminal flag is read, as a long option or as a letter of a bundle:
 | `pack -- --help` | `--help` is not an option after the terminator |
 
 - **A success may miss something required.** Check the terminal flags with `argx_result_flag` or `argx_result_terminal_option` first, and read the rest of the result only when none was given.
-- Options are looked up in the current command only, so each command that should answer `--help` defines its own terminal `--help` ([Subcommands](syntax.md#subcommands)).
+- A terminal flag that is also [global](syntax.md#global-options) ends the parse after the name of any descendant of its command, and `argx_result_command` returns that descendant. One global terminal `--help` on the root answers on every command.
 - The help does not show which flags are terminal.
 
 ## `--help`
@@ -169,7 +169,7 @@ When a terminal flag is read, as a long option or as a letter of a bundle:
 `--help` is an ordinary flag defined in the schema and read with `argx_result_flag`. Parsing never generates or prints help ([Help and Usage](help.md)).
 
 - Make it terminal (`argx_option_set_terminal`), so that `pack --help` and `pack create --help` succeed even though they leave out what is required ([Terminal flags](#terminal-flags)).
-- With `--help` only on the root, `pack create --help` is an unknown option ([Subcommands](syntax.md#subcommands)).
+- Make it global (`argx_option_set_global`) on the root, so that one definition is known on every command ([Global options](syntax.md#global-options)). With a `--help` on the root that is not global, `pack create --help` is an unknown option ([Subcommands](syntax.md#subcommands)).
 - A `--help` that is not terminal is read like any flag: `pack create --help` without the required `--output` is a parse error, but `--help` reads as given since it was read first. So is `pack --help`, which names no subcommand.
 - `pack create --bogus --help` stops at `--bogus`, so `--help` is not read, terminal or not.
 - Pass `argx_result_command` to `argx_help_write` for the help of the last selected command.

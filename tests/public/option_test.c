@@ -1170,6 +1170,57 @@ NAOS_TEST(a_flag_is_made_terminal_and_read)
 }
 
 /*
+ * Every kind can be made global, and not global again. An option is not
+ * global until set. Nothing is allocated for it, and the other attributes
+ * do not change.
+ */
+NAOS_TEST(every_kind_is_made_global_and_read)
+{
+    const argx_option_kind_t kinds[] = { ARGX_OPTION_FLAG, ARGX_OPTION_NEGATABLE, ARGX_OPTION_COUNT,
+                                         ARGX_OPTION_VALUE };
+    const char *names[] = { "flag", "negatable", "count", "value" };
+    argx_command_t *root = create_root();
+    size_t index;
+
+    for (index = 0; index < (sizeof(kinds) / sizeof(kinds[0])); ++index)
+    {
+        argx_option_t *option = add(kinds[index], root, '\0', names[index]);
+        size_t requests;
+
+        NAOS_CHECK_FALSE(argx_option_is_global(option));
+        NAOS_CHECK_INT_EQ(argx_option_set_description(option, "Known below."), ARGX_ERROR_NONE);
+        requests = argx_test_allocator_requests();
+
+        NAOS_CHECK_INT_EQ(argx_option_set_global(option, true), ARGX_ERROR_NONE);
+        NAOS_CHECK_TRUE(argx_option_is_global(option));
+        check_attributes(option, "Known below.", NULL, NULL, false, false, false);
+
+        /* The same value again, then not global. */
+        NAOS_CHECK_INT_EQ(argx_option_set_global(option, true), ARGX_ERROR_NONE);
+        NAOS_CHECK_TRUE(argx_option_is_global(option));
+        NAOS_CHECK_INT_EQ(argx_option_set_global(option, false), ARGX_ERROR_NONE);
+        NAOS_CHECK_FALSE(argx_option_is_global(option));
+
+        NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests);
+        check_option(option, root, kinds[index], '\0', names[index],
+                     (kinds[index] == ARGX_OPTION_NEGATABLE) ? "no-negatable" : NULL,
+                     (kinds[index] == ARGX_OPTION_VALUE) ? argx_type_string() : NULL);
+    }
+
+    /* A global flag can be terminal too. */
+    {
+        argx_option_t *help = add(ARGX_OPTION_FLAG, root, 'h', "help");
+
+        NAOS_CHECK_INT_EQ(argx_option_set_global(help, true), ARGX_ERROR_NONE);
+        NAOS_CHECK_INT_EQ(argx_option_set_terminal(help, true), ARGX_ERROR_NONE);
+        NAOS_CHECK_TRUE(argx_option_is_global(help));
+        NAOS_CHECK_TRUE(argx_option_is_terminal(help));
+    }
+
+    destroy_root(root);
+}
+
+/*
  * Checks that the attributes of an option with a value cannot be set on
  * option, whatever the value is, and that nothing is allocated for it.
  */
@@ -1682,6 +1733,7 @@ NAOS_SUITE(attribute,
     NAOS_ADD_TEST(an_attribute_that_is_set_again_is_replaced),
     NAOS_ADD_TEST(the_initial_state_of_a_negatable_flag_is_set_and_read),
     NAOS_ADD_TEST(a_flag_is_made_terminal_and_read),
+    NAOS_ADD_TEST(every_kind_is_made_global_and_read),
     NAOS_ADD_TEST(an_attribute_of_another_kind_is_an_inconsistent_definition),
     NAOS_ADD_TEST(the_strings_of_the_attributes_are_copied),
     NAOS_ADD_TEST(an_attribute_can_be_set_with_a_string_that_was_read),

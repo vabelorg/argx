@@ -118,7 +118,7 @@ Internal, with no knowledge of a schema. Each has a test in `tests/internal/`.
 | `command.c` | The command tree, and the helpers shared by the schema sources |
 | `option.c` | Adding the four option kinds, setting their attributes, and reading them |
 | `positional.c` | Adding positionals, setting their attributes, and reading them |
-| `validate.c` | The checks that need the whole tree, such as whether each default value converts |
+| `validate.c` | The checks that need the whole tree, such as whether each default value converts, or whether an option reuses a name of a global option of an ancestor |
 
 Each command, option and positional is a separate allocation, so a handle stays valid while the tree grows. The tree copies every string and borrows its value types.
 
@@ -176,14 +176,14 @@ sequenceDiagram
 ```
 
 1. `argx_parse()` creates a result (`result.c`). The result copies the arguments into one allocation. `argx_parse_wide()` converts each argument to UTF-8 at this step (`utf8.c`). From here on, both entry points are the same.
-2. `parse.c` reads each argument once, in order. `lex.c` classifies it by its shape, and `parse.c` matches it against the current command of the schema. A subcommand name selects that command and pushes a new frame onto the result. Each option or value is recorded through the functions of `parse_internal.h`. A value is converted when it is recorded, through `argx_type_convert()`.
+2. `parse.c` reads each argument once, in order. `lex.c` classifies it by its shape, and `parse.c` matches it against the current command of the schema, then against the global options of its ancestors. A subcommand name selects that command and pushes a new frame onto the result. Each option or value is recorded through the functions of `parse_internal.h`, in the frame of the option's own command, so a global option given below its command still has one slot. A value is converted when it is recorded, through `argx_type_convert()`.
 3. The first problem stops the scan. `result.c` records it as the parse error and builds its message (`message.c`). A terminal flag stops the scan too, without an error: `result.c` records the flag, and nothing is resolved.
 4. If the scan reads every argument without a parse error, `resolve.c` makes two passes over the selected commands. The first checks that every required option and positional was given, and records the first missing one as the parse error. If nothing is missing, the second gives the rest their default values.
 5. If memory runs out at any step, the result is destroyed and no result is returned. Otherwise the caller gets the result, with or without a parse error.
 
 The scan state is a local variable of the scan. Nothing is kept between two parses.
 
-`--help` gets no special treatment: it is an ordinary flag the program defines, and the program makes it terminal.
+`--help` gets no special treatment: it is an ordinary flag the program defines, and the program makes it terminal and global.
 
 ## Writing the help
 

@@ -14,6 +14,17 @@ TRY(argx_command_set_subcommand_optional(remote, true));
 
 The command line may then end in `remote`, `argx_result_command` returns it, and its usage line shows `[COMMAND]` instead of `<COMMAND>` ([Subcommands](../references/syntax.md#subcommands)). The setting belongs to `remote` only. Handle that case where you branch on `argx_result_command`, as `run` in [examples/pack/pack.c](../../examples/pack/pack.c) does for `create` and `list`.
 
+### Defining an option for the whole program
+
+Options such as `--verbose` or `--config` belong to the whole program, and users write them before or after the subcommand. Define them once, on the root, and make them global:
+
+```c
+TRY(argx_command_add_count(root, 'v', "verbose", &verbose));
+TRY(argx_option_set_global(verbose, true));
+```
+
+Every subcommand at any depth then knows `-v`, and `argx_result_count(result, verbose)` counts all of them: `pack -v create -vv` gives 3. The help of each subcommand lists it under `Global options:`. A subcommand cannot define another `-v` or `--verbose`: validation reports it as `ARGX_ERROR_NAME_CONFLICT` ([Global options](../references/syntax.md#global-options)).
+
 ### Printing an error message when no subcommand is given
 
 `examples/pack/pack.c` prints the help when a command line ends without a subcommand, as most programs with subcommands do. To print the message of the parse error and the usage line instead, like any other parse error, drop that branch from the `ARGX_ERROR_INVALID_COMMAND_LINE` case:
@@ -34,7 +45,7 @@ For more information, try '--help'.
 
 ### Passing a value that starts with `-`
 
-Write it after `--`: `pack create -o out.tar -- -notes.txt`. A negative number such as `-1` is a value even without `--`, unless the command has a digit as a short option name ([How elements are classified](../references/syntax.md#how-elements-are-classified)).
+Write it after `--`: `pack create -o out.tar -- -notes.txt`. A negative number such as `-1` is a value even without `--`, unless a digit is a short option name known in the command, its own or a global option of an ancestor, ([How elements are classified](../references/syntax.md#how-elements-are-classified)).
 
 ### Wide-character argv with `wmain`
 
@@ -166,4 +177,4 @@ print_command_path(stderr, argx_result_error_command(result));
 fputs(" --help'.\n", stderr);
 ```
 
-For `pack create --colour`, this prints `For more information, try 'pack create --help'.` The command named must define `--help` itself ([Why is `--help` an unknown option after a subcommand?](faq.md#why-is---help-an-unknown-option-after-a-subcommand)).
+For `pack create --colour`, this prints `For more information, try 'pack create --help'.` The command named must know `--help`: it defines it, or an ancestor defines it as a global option, as `examples/pack/pack.c` does ([Why is `--help` an unknown option after a subcommand?](faq.md#why-is---help-an-unknown-option-after-a-subcommand)).

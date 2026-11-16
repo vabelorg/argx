@@ -199,7 +199,8 @@ ARGX_API void argx_help_options_set_max_column(argx_help_options_t *options, siz
  *   root down to command, separated by single blanks.
  * - "[OPTIONS]", when command has an option that is not required: a flag,
  *   a negatable flag, a count, or an option with a value that is not
- *   required.
+ *   required. The global options of command's ancestors
+ *   (argx_option_set_global() in <argx/schema.h>) count too.
  * - Each required option of command, in the order the options were added:
  *   "--" and the long name, or "-" and the short name when the option has
  *   no long name, then a blank and the value name between "<" and ">".
@@ -230,7 +231,9 @@ ARGX_API void argx_help_options_set_max_column(argx_help_options_t *options, siz
  * the first line. Keep newlines out of names.
  *
  * Only what command itself has is shown: not its parent's options, and
- * nothing from its subcommands. The only schema strings the usage line
+ * nothing from its subcommands. A global option of an ancestor is not
+ * shown on its own, even when it is required; it only counts for
+ * "[OPTIONS]". The only schema strings the usage line
  * shows are names, including value names and value type names; they are
  * written as is, byte by byte.
  *
@@ -294,8 +297,12 @@ ARGX_API argx_error_t argx_help_write_usage(const argx_command_t *command,
  *   heading, written as in the usage line, the whole description and the
  *   annotations.
  * - "Options:" and, each on its own line, the options of command itself,
- *   not those of its parent or its subcommands: the heading, the whole
- *   description and the annotations.
+ *   global or not, and not those of its parent or its subcommands: the
+ *   heading, the whole description and the annotations.
+ * - "Global options:" and, each on its own line, the global options of
+ *   command's ancestors (argx_option_set_global() in <argx/schema.h>),
+ *   written as in "Options:": those of the root first, then those of each
+ *   command further down, each command's in the order they were added.
  *
  * An option's heading starts with its names: "-s, --long" with both
  * names, "-s" with only a short name, and four blanks and "--long" with

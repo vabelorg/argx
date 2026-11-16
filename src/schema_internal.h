@@ -77,6 +77,8 @@ struct argx_command
  *   for every other kind.
  * - terminal: whether reading the option ends the parse. Only the
  *   ARGX_OPTION_FLAG kind can be terminal.
+ * - global: whether the option is also known on every descendant of its
+ *   command. Any kind can be global.
  */
 struct argx_option
 {
@@ -92,6 +94,7 @@ struct argx_option
     bool required;
     bool initial;
     bool terminal;
+    bool global;
 };
 
 /*

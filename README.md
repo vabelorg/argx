@@ -14,7 +14,7 @@ ArgX is a command-line argument parser for C99. Define your command line once as
 
 - Plain C99 with no compiler extensions and no dependencies beyond the C standard library.
 - Builds on Linux (GCC, Clang), macOS (Clang) and Windows (MSVC, MinGW), as a static or a shared library.
-- Options (flags, counts, `--no-` negatable flags, options with a value), positionals and nested subcommands.
+- Options (flags, counts, `--no-` negatable flags, options with a value), positionals and nested subcommands, with global options that every subcommand knows.
 - Typed values: strings, integers, floating-point numbers, choices, and value types you define.
 - Help and usage text generated from the schema, written through your write function or into your buffer.
 - No side effects: the library prints nothing, never exits the process and reads no environment variables. Errors come back as an error code and a one-line message.

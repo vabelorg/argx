@@ -15,7 +15,7 @@ API reference of `include/argx/error.h`. A function that can fail at run time re
 | `ARGX_ERROR_NONE` | `"success"` | Success | Every function that can fail |
 | `ARGX_ERROR_OUT_OF_MEMORY` | `"out of memory"` | An allocation failed | Every function that allocates |
 | `ARGX_ERROR_INVALID_NAME` | `"invalid name"` | A name is invalid, empty or missing | The add functions of [Schemas](schema.md#errors-when-adding-and-setting), `argx_type_create` ([Value Types](types.md#errors-when-creating)) |
-| `ARGX_ERROR_NAME_CONFLICT` | `"name already in use"` | Names conflict within a command | The add functions of [Schemas](schema.md#errors-when-adding-and-setting) |
+| `ARGX_ERROR_NAME_CONFLICT` | `"name already in use"` | Names conflict within a command, or with a global option of an ancestor | The add functions and validation of [Schemas](schema.md#definition-errors) |
 | `ARGX_ERROR_INVALID_DEFINITION` | `"inconsistent definition"` | Definitions contradict each other | The add and set functions and validation of [Schemas](schema.md#definition-errors), `argx_type_create_choice` ([Value Types](types.md#errors-when-creating)) |
 | `ARGX_ERROR_INVALID_DEFAULT` | `"default value rejected by its value type"` | A default value cannot be converted | `argx_command_validate` ([Schemas](schema.md#errors-found-by-validation)) |
 | `ARGX_ERROR_INVALID_VALUE` | `"invalid value"` | A conversion rejected its input | Conversion functions and `argx_type_convert` ([Value Types](types.md#the-conversion-function)). Never parsing |

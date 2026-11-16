@@ -520,11 +520,11 @@ typedef struct fixture
 
 /*
  * Adds an option with a value to command and sets what is not NULL or
- * false; it must succeed.
+ * false; it must succeed. Returns the option.
  */
-static void add_value(argx_command_t *command, char short_name, const char *long_name,
-                      const argx_type_t *type, const char *value_name, const char *default_value,
-                      bool required, const char *description)
+static argx_option_t *add_value(argx_command_t *command, char short_name, const char *long_name,
+                                const argx_type_t *type, const char *value_name,
+                                const char *default_value, bool required, const char *description)
 {
     argx_option_t *option = NULL;
 
@@ -544,6 +544,7 @@ static void add_value(argx_command_t *command, char short_name, const char *long
         NAOS_REQUIRE_TRUE(argx_option_set_required(option, true) == ARGX_ERROR_NONE);
     }
     NAOS_REQUIRE_TRUE(argx_option_set_description(option, description) == ARGX_ERROR_NONE);
+    return option;
 }
 
 /*
@@ -571,12 +572,14 @@ static void add_positional(argx_command_t *command, const char *name, const argx
 /*
  * Builds and validates the schema of the tests.
  *
- * The root "tool" has two subcommands and five options; the subcommand
+ * The root "tool" has two subcommands and six options; the subcommand
  * "build" has two positionals and two options. Both have every annotation:
  * choices, default values, a required option, and a negatable flag whose
  * initial state is on. In each of the two helps the cells get longer from
  * item to item, up to some hundred bytes, so that the cell text is
- * allocated with the first item and grows several times after it.
+ * allocated with the first item and grows several times after it. The
+ * last option of the root, --log, is global and has the longest cell, so
+ * the cell text grows once more in the "Global options:" list of "build".
  */
 static void build_schema(fixture_t *fixture)
 {
@@ -611,18 +614,30 @@ static void build_schema(fixture_t *fixture)
     NAOS_REQUIRE_TRUE(argx_option_set_description(option, "Use colors in the messages") ==
                       ARGX_ERROR_NONE);
 
-    add_value(fixture->root, 'f', "format", fixture->format, "FMT", "text", false,
+    (void)add_value(fixture->root, 'f', "format", fixture->format, "FMT", "text", false,
               "The format of the report that is written when a command ends, for a person "
               "to read or for another program to take apart");
-    add_value(fixture->root, 'o', "output", argx_type_string(), "FILE", NULL, true,
+    (void)add_value(fixture->root, 'o', "output", argx_type_string(), "FILE", NULL, true,
               "The file that the report is written to. The directories of the file are "
               "created when they do not exist, and a file of the same name is replaced "
               "without a question.\n"
               "The name is taken as it is given: it is not looked up in the directory of "
               "the project, and no ending is added to it, whatever the format of the "
               "report is.");
-    add_value(fixture->root, 'j', "jobs", argx_type_int(), "N", "4", false,
+    (void)add_value(fixture->root, 'j', "jobs", argx_type_int(), "N", "4", false,
               "How many parts are built at a time");
+
+    option = add_value(fixture->root, 'l', "log", argx_type_string(), "FILE", NULL, false,
+              "The file that every step of every command is written to, with the time it "
+              "started, the time it took, and what it did: the parts it looked at, the "
+              "parts it built and the parts it kept, the commands it ran with all their "
+              "arguments, and the messages of those commands as they wrote them.\n"
+              "The file grows with every command and is never cut by the tool, so a long "
+              "project keeps the whole of its history in it; remove the file, or give "
+              "another one, to start over with an empty one. Two commands that run at "
+              "the same time write to it in turns, a line at a time, so their lines may "
+              "be mixed but are never cut in the middle.");
+    NAOS_REQUIRE_TRUE(argx_option_set_global(option, true) == ARGX_ERROR_NONE);
 
     NAOS_REQUIRE_TRUE(argx_command_add_subcommand(fixture->root, "build", &build) ==
                       ARGX_ERROR_NONE);
@@ -643,7 +658,7 @@ static void build_schema(fixture_t *fixture)
     NAOS_REQUIRE_TRUE(argx_option_set_initial(option, true) == ARGX_ERROR_NONE);
     NAOS_REQUIRE_TRUE(argx_option_set_description(option, "Keep the results") ==
                       ARGX_ERROR_NONE);
-    add_value(build, 'm', "mode", fixture->target, NULL, NULL, true,
+    (void)add_value(build, 'm', "mode", fixture->target, NULL, NULL, true,
               "How the parts are built. The mode decides which checks are compiled into the "
               "parts and how much time the compiler may spend on each of them; the parts of "
               "two modes are kept apart, so a change of the mode builds every part once.\n"

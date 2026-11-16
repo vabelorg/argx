@@ -8,11 +8,11 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 | --- | --- |
 | `argx_command_create`, `argx_command_destroy`, `argx_command_add_subcommand`, `argx_command_set_description`, `argx_command_set_summary`, `argx_command_set_subcommand_optional` | [Commands](#commands) |
 | `argx_command_add_flag`, `argx_command_add_negatable`, `argx_command_add_count`, `argx_command_add_value` | [Options](#options) |
-| `argx_option_set_description`, `argx_option_set_value_name`, `argx_option_set_required`, `argx_option_set_default`, `argx_option_set_initial`, `argx_option_set_terminal` | [Attributes](#attributes) |
+| `argx_option_set_description`, `argx_option_set_value_name`, `argx_option_set_required`, `argx_option_set_default`, `argx_option_set_initial`, `argx_option_set_terminal`, `argx_option_set_global` | [Attributes](#attributes) |
 | `argx_command_add_positional`, `argx_positional_set_description`, `argx_positional_set_default` | [Positionals](#positionals) |
 | `argx_command_validate`, `argx_command_is_validated` | [Validation](#validation) |
 | `argx_command_name`, `argx_command_description`, `argx_command_summary`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_option_count`, `argx_command_option_at`, `argx_command_positional_count`, `argx_command_positional_at`, `argx_command_subcommand_count`, `argx_command_subcommand_at`, `argx_command_find_short`, `argx_command_find_long`, `argx_command_find_subcommand` | [Reading a schema](#reading-a-schema) |
-| `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial`, `argx_option_is_terminal` | [Reading a schema](#reading-a-schema) |
+| `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial`, `argx_option_is_terminal`, `argx_option_is_global` | [Reading a schema](#reading-a-schema) |
 | `argx_positional_command`, `argx_positional_name`, `argx_positional_arity`, `argx_positional_type`, `argx_positional_description`, `argx_positional_default` | [Reading a schema](#reading-a-schema) |
 
 ## Commands
@@ -57,11 +57,13 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 | Default value | `argx_option_set_default` | `ARGX_OPTION_VALUE` | `NULL` |
 | Initial state | `argx_option_set_initial` | `ARGX_OPTION_NEGATABLE` | `false` |
 | Terminal | `argx_option_set_terminal` | `ARGX_OPTION_FLAG` | `false` |
+| Global | `argx_option_set_global` | All | `false` |
 
 - Setting an attribute on a kind it does not apply to is an error, whatever the value.
 - A default value is written as on the command line; validation checks that it converts.
 - Required together with a default is a validation error.
 - A terminal flag ends the parse when it is read: the parse succeeds without reading the arguments after it and without checking what is required. Use it for `--help` and `--version` ([Terminal flags](parse.md#terminal-flags)). It does not change the help.
+- A global option is known on its command and on every descendant of that command, so it can be given after the name of any of them. Use it for options of the whole program, such as `--help`, `--verbose` or `--config` ([Global options](syntax.md#global-options)). It is still one option of its command: one handle reads it wherever it was given, and its required check and default value are its command's. The help of a descendant lists it under `Global options:` ([Structure](help-layout.md#structure)).
 - The description and value name only affect the help. Without a value name, the type name is shown. A newline in a value name breaks the help columns ([Limits](help-layout.md#limits)).
 
 ## Positionals
@@ -85,7 +87,7 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 - **Setting again replaces.** No function clears a setting.
 - **Empty is not unset.** `""` differs from `NULL`.
 - **Names are compared byte by byte,** case-sensitively.
-- **Conflicts are checked per command.** A parent and a child, or two subcommands, may reuse names.
+- **Conflicts are checked per command,** with one exception. A parent and a child, or two subcommands, may reuse names, but no option below a command may reuse a name of that command's global options; validation checks it, since an option can be made global after its descendants are added.
 - **The root owns the whole tree.** Handles are never destroyed on their own.
 - **Nothing can be removed or copied.**
 
@@ -106,7 +108,7 @@ bool argx_command_is_validated(const argx_command_t *command);
 | Return value | `*command` | `*option` | `*positional` | Validation state |
 | --- | --- | --- | --- | --- |
 | `ARGX_ERROR_NONE` | `NULL` | `NULL` | `NULL` | Validated |
-| `ARGX_ERROR_INVALID_DEFINITION`, `ARGX_ERROR_INVALID_DEFAULT` (option) | Its command | The option | `NULL` | Unchanged |
+| `ARGX_ERROR_NAME_CONFLICT`, `ARGX_ERROR_INVALID_DEFINITION`, `ARGX_ERROR_INVALID_DEFAULT` (option) | Its command | The option | `NULL` | Unchanged |
 | `ARGX_ERROR_INVALID_DEFINITION`, `ARGX_ERROR_INVALID_DEFAULT` (positional) | Its command | `NULL` | The positional | Unchanged |
 | `ARGX_ERROR_INVALID_DEFINITION` (command) | The command | `NULL` | `NULL` | Unchanged |
 | `ARGX_ERROR_OUT_OF_MEMORY` | `NULL` | `NULL` | `NULL` | Unchanged |
@@ -183,6 +185,7 @@ Within a function, the first matching row is returned. Every function can also r
 | --- | --- | --- |
 | `ARGX_ARITY_REQUIRED` or `ARGX_ARITY_ONE_OR_MORE` after `ARGX_ARITY_OPTIONAL` or `ARGX_ARITY_ZERO_OR_MORE` | `ARGX_ERROR_INVALID_DEFINITION` | The later positional |
 | Any positional after `ARGX_ARITY_ZERO_OR_MORE` or `ARGX_ARITY_ONE_OR_MORE` | `ARGX_ERROR_INVALID_DEFINITION` | The later positional |
+| A name of an option is a name of a global option of an ancestor | `ARGX_ERROR_NAME_CONFLICT` | The option of the descendant |
 | An option is required and has a default | `ARGX_ERROR_INVALID_DEFINITION` | The option |
 | An option's default does not convert | `ARGX_ERROR_INVALID_DEFAULT` | The option |
 | A positional's default does not convert | `ARGX_ERROR_INVALID_DEFAULT` | The positional |
@@ -196,7 +199,7 @@ Any other conversion failure becomes `ARGX_ERROR_INVALID_DEFAULT`.
 Commands are checked depth first from the root, subcommands in the order added. Within a command:
 
 1. The order of positional arities.
-2. Each option in the order added: required with a default, then the default's conversion.
+2. Each option in the order added: a name of a global option of an ancestor, then required with a default, then the default's conversion.
 3. Each positional's default conversion, in the order added.
 4. Optional subcommands without a subcommand.
 
@@ -214,6 +217,7 @@ Every schema satisfies these, since the add and set functions enforce them:
 A validated schema also satisfies, for every command:
 
 - The positionals are either zero or more `REQUIRED`, zero or more `OPTIONAL`, and at most one `ZERO_OR_MORE`, or zero or more `REQUIRED` and one `ONE_OR_MORE`.
+- No option uses a name of a global option of an ancestor.
 - No required option has a default.
 - Only a command with subcommands has optional subcommands.
 - Every default converted successfully at validation, so it will again if the conversion is deterministic.
@@ -227,12 +231,12 @@ The read functions take `const` handles, change nothing and never fail.
 | Command | `argx_command_name`, `argx_command_description`, `argx_command_summary`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_is_validated` |
 | Enumeration | `argx_command_option_count`/`_at`, `argx_command_positional_count`/`_at`, `argx_command_subcommand_count`/`_at` |
 | Lookup | `argx_command_find_short`, `argx_command_find_long`, `argx_command_find_subcommand` |
-| Option | `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial`, `argx_option_is_terminal` |
+| Option | `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial`, `argx_option_is_terminal`, `argx_option_is_global` |
 | Positional | `argx_positional_command`, `argx_positional_name`, `argx_positional_arity`, `argx_positional_type`, `argx_positional_description`, `argx_positional_default` |
 
 - Enumeration follows the order added, from index 0.
 - Unset strings and handles read as `NULL`, a missing short name as `'\0'`, and an attribute that does not apply to the kind as `NULL` or `false`.
-- Lookups search only the given command, comparing whole names. `argx_command_find_long` matches the first `length` bytes of `name` (so `name=value` needs no copy), also matches negated names, and writes which matched to `*negated` when found. `argx_command_find_short('\0')` returns `NULL`.
+- Lookups search only the given command, comparing whole names, not the global options of its ancestors. `argx_command_find_long` matches the first `length` bytes of `name` (so `name=value` needs no copy), also matches negated names, and writes which matched to `*negated` when found. `argx_command_find_short('\0')` returns `NULL`.
 - Returned strings and handles live until the root is destroyed, except that a description, summary, value name or default lives only until that attribute is set again.
 - Reads may run concurrently while the schema is not changed. Changing or validating must not overlap any other call on the schema.
 
