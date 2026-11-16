@@ -91,8 +91,7 @@ get_target_property(argx_type argx TYPE)
 if(argx_type STREQUAL "SHARED_LIBRARY")
     if(WIN32 AND MINGW)
         # MinGW has no dumpbin: the objdump of its binutils reads the export
-        # table. CMake finds it with the compiler (CMAKE_OBJDUMP), also for a
-        # cross build.
+        # table. CMake finds it with the compiler (CMAKE_OBJDUMP).
         set(argx_exports_format PE)
         set(argx_exports_tool "${CMAKE_OBJDUMP}")
     elseif(WIN32)
