@@ -163,8 +163,11 @@ sequenceDiagram
             P->>R: record the parse error
             Note over R: message.c builds the message
         end
+        break a terminal flag
+            P->>R: record the flag that ended the scan
+        end
     end
-    opt the scan ended without a parse error
+    opt the scan read every argument without a parse error
         P->>V: resolve
         V->>R: check what is required (a missing one is a parse error)
         V->>R: apply default values
@@ -174,13 +177,13 @@ sequenceDiagram
 
 1. `argx_parse()` creates a result (`result.c`). The result copies the arguments into one allocation. `argx_parse_wide()` converts each argument to UTF-8 at this step (`utf8.c`). From here on, both entry points are the same.
 2. `parse.c` reads each argument once, in order. `lex.c` classifies it by its shape, and `parse.c` matches it against the current command of the schema. A subcommand name selects that command and pushes a new frame onto the result. Each option or value is recorded through the functions of `parse_internal.h`. A value is converted when it is recorded, through `argx_type_convert()`.
-3. The first problem stops the scan. `result.c` records it as the parse error and builds its message (`message.c`).
-4. If the scan ends without a parse error, `resolve.c` makes two passes over the selected commands. The first checks that every required option and positional was given, and records the first missing one as the parse error. If nothing is missing, the second gives the rest their default values.
+3. The first problem stops the scan. `result.c` records it as the parse error and builds its message (`message.c`). A terminal flag stops the scan too, without an error: `result.c` records the flag, and nothing is resolved.
+4. If the scan reads every argument without a parse error, `resolve.c` makes two passes over the selected commands. The first checks that every required option and positional was given, and records the first missing one as the parse error. If nothing is missing, the second gives the rest their default values.
 5. If memory runs out at any step, the result is destroyed and no result is returned. Otherwise the caller gets the result, with or without a parse error.
 
 The scan state is a local variable of the scan. Nothing is kept between two parses.
 
-`--help` gets no special treatment: it is an ordinary flag the program defines.
+`--help` gets no special treatment: it is an ordinary flag the program defines, and the program makes it terminal.
 
 ## Writing the help
 

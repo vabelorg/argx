@@ -1052,17 +1052,18 @@ typedef enum mutation
     SET_OPTION_REQUIRED,
     SET_OPTION_DEFAULT,
     SET_OPTION_INITIAL,
+    SET_OPTION_TERMINAL,
     SET_POSITIONAL_DESCRIPTION,
     SET_POSITIONAL_DEFAULT
 } mutation_t;
 
-#define MUTATION_COUNT 16
+#define MUTATION_COUNT 17
 static const mutation_t all_mutations[MUTATION_COUNT] = {
     ADD_SUBCOMMAND,          ADD_FLAG,              ADD_NEGATABLE,       ADD_COUNT,
     ADD_VALUE,               ADD_POSITIONAL,        SET_COMMAND_DESCRIPTION,
     SET_COMMAND_SUMMARY,     SET_COMMAND_SUBCOMMAND_OPTIONAL,
     SET_OPTION_DESCRIPTION,  SET_OPTION_VALUE_NAME, SET_OPTION_REQUIRED, SET_OPTION_DEFAULT,
-    SET_OPTION_INITIAL,      SET_POSITIONAL_DESCRIPTION,
+    SET_OPTION_INITIAL,      SET_OPTION_TERMINAL,   SET_POSITIONAL_DESCRIPTION,
     SET_POSITIONAL_DEFAULT
 };
 
@@ -1093,6 +1094,7 @@ static size_t mutation_allocations(mutation_t mutation)
     case SET_COMMAND_SUBCOMMAND_OPTIONAL:
     case SET_OPTION_REQUIRED:
     case SET_OPTION_INITIAL:
+    case SET_OPTION_TERMINAL:
         return 0;
     default:
         return 1;
@@ -1137,6 +1139,8 @@ static argx_error_t mutate(const fixture_t *fixture, mutation_t mutation)
         return argx_option_set_default(fixture->value, "out.txt");
     case SET_OPTION_INITIAL:
         return argx_option_set_initial(fixture->negatable, true);
+    case SET_OPTION_TERMINAL:
+        return argx_option_set_terminal(fixture->flag, true);
     case SET_POSITIONAL_DESCRIPTION:
         return argx_positional_set_description(fixture->required, "A description.");
     case SET_POSITIONAL_DEFAULT:
@@ -1205,6 +1209,10 @@ NAOS_TEST(a_set_of_the_same_value_takes_a_validated_tree_back_to_not_validated)
         check_state(&fixture, false);
         NAOS_REQUIRE_TRUE(argx_command_validate(fixture.root, NULL, NULL, NULL) == ARGX_ERROR_NONE);
 
+        NAOS_CHECK_INT_EQ(argx_option_set_terminal(fixture.flag, false), ARGX_ERROR_NONE);
+        check_state(&fixture, false);
+        NAOS_REQUIRE_TRUE(argx_command_validate(fixture.root, NULL, NULL, NULL) == ARGX_ERROR_NONE);
+
         NAOS_CHECK_INT_EQ(argx_command_set_subcommand_optional(fixture.target, false),
                           ARGX_ERROR_NONE);
         check_state(&fixture, false);
@@ -1267,10 +1275,11 @@ typedef enum refusal
     REQUIRED_OF_A_FLAG,
     DEFAULT_OF_A_FLAG,
     INITIAL_OF_A_VALUE,
+    TERMINAL_OF_A_NEGATABLE,
     DEFAULT_OF_A_REQUIRED_POSITIONAL
 } refusal_t;
 
-#define REFUSAL_COUNT 20
+#define REFUSAL_COUNT 21
 static const refusal_t all_refusals[REFUSAL_COUNT] = {
     SUBCOMMAND_WITH_A_WRONG_NAME,   OPTION_WITHOUT_A_NAME,
     FLAG_WITH_A_WRONG_SHORT_NAME,   NEGATABLE_WITHOUT_A_LONG_NAME,
@@ -1281,7 +1290,8 @@ static const refusal_t all_refusals[REFUSAL_COUNT] = {
     POSITIONAL_WITH_A_NAME_IN_USE,  SUBCOMMAND_NEXT_TO_POSITIONALS,
     POSITIONAL_NEXT_TO_SUBCOMMANDS, VALUE_NAME_OF_A_FLAG,
     REQUIRED_OF_A_FLAG,             DEFAULT_OF_A_FLAG,
-    INITIAL_OF_A_VALUE,             DEFAULT_OF_A_REQUIRED_POSITIONAL
+    INITIAL_OF_A_VALUE,             TERMINAL_OF_A_NEGATABLE,
+    DEFAULT_OF_A_REQUIRED_POSITIONAL
 };
 
 /* Whether the change is tried on a target with positionals. */
@@ -1317,6 +1327,7 @@ static argx_error_t refusal_error(refusal_t refusal)
     case REQUIRED_OF_A_FLAG:
     case DEFAULT_OF_A_FLAG:
     case INITIAL_OF_A_VALUE:
+    case TERMINAL_OF_A_NEGATABLE:
     case DEFAULT_OF_A_REQUIRED_POSITIONAL:
         return ARGX_ERROR_INVALID_DEFINITION;
     default:
@@ -1371,6 +1382,8 @@ static argx_error_t attempt(const fixture_t *fixture, refusal_t refusal)
         return argx_option_set_default(fixture->negatable, "on");
     case INITIAL_OF_A_VALUE:
         return argx_option_set_initial(fixture->value, true);
+    case TERMINAL_OF_A_NEGATABLE:
+        return argx_option_set_terminal(fixture->negatable, true);
     case DEFAULT_OF_A_REQUIRED_POSITIONAL:
         return argx_positional_set_default(fixture->required, "more");
     default:

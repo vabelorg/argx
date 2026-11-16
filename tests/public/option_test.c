@@ -247,7 +247,7 @@ static void check_text(const char *actual, const char *expected)
  * is NULL when the attribute must not be set.
  */
 static void check_attributes(const argx_option_t *option, const char *description, const char *value_name,
-                             const char *default_value, bool required, bool initial)
+                             const char *default_value, bool required, bool initial, bool terminal)
 {
     NAOS_REQUIRE_TRUE(option != NULL);
     check_text(argx_option_description(option), description);
@@ -255,6 +255,7 @@ static void check_attributes(const argx_option_t *option, const char *descriptio
     check_text(argx_option_default(option), default_value);
     NAOS_CHECK_TRUE(argx_option_is_required(option) == required);
     NAOS_CHECK_TRUE(argx_option_initial(option) == initial);
+    NAOS_CHECK_TRUE(argx_option_is_terminal(option) == terminal);
 }
 
 /* Looks name up as a long name, the whole string. */
@@ -949,16 +950,16 @@ NAOS_TEST(find_long_compares_exactly_length_bytes)
 
 /*
  * Until an attribute is set, a string is read as NULL, an option is not
- * required, and the initial state is off.
+ * required, the initial state is off, and a flag is not terminal.
  */
 NAOS_TEST(a_new_option_has_no_attribute)
 {
     argx_command_t *root = create_root();
 
-    check_attributes(add(ARGX_OPTION_FLAG, root, 'v', "verbose"), NULL, NULL, NULL, false, false);
-    check_attributes(add(ARGX_OPTION_NEGATABLE, root, 'c', "color"), NULL, NULL, NULL, false, false);
-    check_attributes(add(ARGX_OPTION_COUNT, root, 'd', "debug"), NULL, NULL, NULL, false, false);
-    check_attributes(add(ARGX_OPTION_VALUE, root, 'o', "output"), NULL, NULL, NULL, false, false);
+    check_attributes(add(ARGX_OPTION_FLAG, root, 'v', "verbose"), NULL, NULL, NULL, false, false, false);
+    check_attributes(add(ARGX_OPTION_NEGATABLE, root, 'c', "color"), NULL, NULL, NULL, false, false, false);
+    check_attributes(add(ARGX_OPTION_COUNT, root, 'd', "debug"), NULL, NULL, NULL, false, false, false);
+    check_attributes(add(ARGX_OPTION_VALUE, root, 'o', "output"), NULL, NULL, NULL, false, false, false);
 
     destroy_root(root);
 }
@@ -977,27 +978,27 @@ NAOS_TEST(a_description_is_set_on_every_kind)
         argx_option_t *option = add(kinds[index], root, '\0', names[index]);
 
         NAOS_CHECK_INT_EQ(argx_option_set_description(option, "Says what it does."), ARGX_ERROR_NONE);
-        check_attributes(option, "Says what it does.", NULL, NULL, false, false);
+        check_attributes(option, "Says what it does.", NULL, NULL, false, false, false);
 
         /* Set again, it replaces what was set. */
         NAOS_CHECK_INT_EQ(argx_option_set_description(option, "Another, longer description."),
                           ARGX_ERROR_NONE);
-        check_attributes(option, "Another, longer description.", NULL, NULL, false, false);
+        check_attributes(option, "Another, longer description.", NULL, NULL, false, false, false);
 
         /* The empty string is a description; it is not the same as none. */
         NAOS_CHECK_INT_EQ(argx_option_set_description(option, ""), ARGX_ERROR_NONE);
-        check_attributes(option, "", NULL, NULL, false, false);
+        check_attributes(option, "", NULL, NULL, false, false, false);
 
         NAOS_CHECK_INT_EQ(argx_option_set_description(option, "x"), ARGX_ERROR_NONE);
-        check_attributes(option, "x", NULL, NULL, false, false);
+        check_attributes(option, "x", NULL, NULL, false, false, false);
     }
 
     /* The description of one option is not the description of another. */
     NAOS_CHECK_INT_EQ(
         argx_option_set_description(add(ARGX_OPTION_FLAG, root, 'a', NULL), "Only this one."),
         ARGX_ERROR_NONE);
-    check_attributes(argx_command_option_at(root, 0), "x", NULL, NULL, false, false);
-    check_attributes(argx_command_find_short(root, 'a'), "Only this one.", NULL, NULL, false, false);
+    check_attributes(argx_command_option_at(root, 0), "x", NULL, NULL, false, false, false);
+    check_attributes(argx_command_find_short(root, 'a'), "Only this one.", NULL, NULL, false, false, false);
 
     destroy_root(root);
 }
@@ -1017,22 +1018,22 @@ NAOS_TEST(the_attributes_of_an_option_with_a_value_are_set_and_read)
                       ARGX_ERROR_NONE);
 
     NAOS_CHECK_INT_EQ(argx_option_set_value_name(jobs, "N"), ARGX_ERROR_NONE);
-    check_attributes(jobs, NULL, "N", NULL, false, false);
+    check_attributes(jobs, NULL, "N", NULL, false, false, false);
 
     NAOS_CHECK_INT_EQ(argx_option_set_default(jobs, "4"), ARGX_ERROR_NONE);
-    check_attributes(jobs, NULL, "N", "4", false, false);
+    check_attributes(jobs, NULL, "N", "4", false, false, false);
 
     NAOS_CHECK_INT_EQ(argx_option_set_description(jobs, "Number of jobs."), ARGX_ERROR_NONE);
-    check_attributes(jobs, "Number of jobs.", "N", "4", false, false);
+    check_attributes(jobs, "Number of jobs.", "N", "4", false, false, false);
 
     NAOS_CHECK_INT_EQ(argx_option_set_required(output, true), ARGX_ERROR_NONE);
-    check_attributes(output, NULL, NULL, NULL, true, false);
+    check_attributes(output, NULL, NULL, NULL, true, false, false);
 
     /*
      * The other option, the names, the kind and the value type are as they
      * were.
      */
-    check_attributes(jobs, "Number of jobs.", "N", "4", false, false);
+    check_attributes(jobs, "Number of jobs.", "N", "4", false, false, false);
     check_option(jobs, root, ARGX_OPTION_VALUE, 'j', "jobs", NULL, argx_type_int());
     check_option(output, root, ARGX_OPTION_VALUE, 'o', "output", NULL, argx_type_string());
     NAOS_CHECK_UINT_EQ(argx_command_option_count(root), 2);
@@ -1045,9 +1046,9 @@ NAOS_TEST(the_attributes_of_an_option_with_a_value_are_set_and_read)
      * validation, not here. The empty string is a value.
      */
     NAOS_CHECK_INT_EQ(argx_option_set_default(jobs, "not a number"), ARGX_ERROR_NONE);
-    check_attributes(jobs, "Number of jobs.", "N", "not a number", false, false);
+    check_attributes(jobs, "Number of jobs.", "N", "not a number", false, false, false);
     NAOS_CHECK_INT_EQ(argx_option_set_default(output, ""), ARGX_ERROR_NONE);
-    check_attributes(output, NULL, NULL, "", true, false);
+    check_attributes(output, NULL, NULL, "", true, false, false);
 
     destroy_root(root);
 }
@@ -1062,23 +1063,23 @@ NAOS_TEST(an_attribute_that_is_set_again_is_replaced)
 
     NAOS_CHECK_INT_EQ(argx_option_set_value_name(value, "FILE"), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_default(value, "a.out"), ARGX_ERROR_NONE);
-    check_attributes(value, NULL, "FILE", "a.out", false, false);
+    check_attributes(value, NULL, "FILE", "a.out", false, false, false);
     live = argx_test_allocator_live();
 
     /* A longer and a shorter string. */
     NAOS_CHECK_INT_EQ(argx_option_set_value_name(value, "PATH-OF-THE-OUTPUT"), ARGX_ERROR_NONE);
-    check_attributes(value, NULL, "PATH-OF-THE-OUTPUT", "a.out", false, false);
+    check_attributes(value, NULL, "PATH-OF-THE-OUTPUT", "a.out", false, false, false);
     NAOS_CHECK_INT_EQ(argx_option_set_value_name(value, "P"), ARGX_ERROR_NONE);
-    check_attributes(value, NULL, "P", "a.out", false, false);
+    check_attributes(value, NULL, "P", "a.out", false, false, false);
 
     NAOS_CHECK_INT_EQ(argx_option_set_default(value, "build/output/program.bin"), ARGX_ERROR_NONE);
-    check_attributes(value, NULL, "P", "build/output/program.bin", false, false);
+    check_attributes(value, NULL, "P", "build/output/program.bin", false, false, false);
     NAOS_CHECK_INT_EQ(argx_option_set_default(value, "-"), ARGX_ERROR_NONE);
-    check_attributes(value, NULL, "P", "-", false, false);
+    check_attributes(value, NULL, "P", "-", false, false, false);
 
     /* The same value again. */
     NAOS_CHECK_INT_EQ(argx_option_set_default(value, "-"), ARGX_ERROR_NONE);
-    check_attributes(value, NULL, "P", "-", false, false);
+    check_attributes(value, NULL, "P", "-", false, false, false);
 
     /* The string that was replaced is freed: no block more than before. */
     NAOS_CHECK_UINT_EQ(argx_test_allocator_live(), live);
@@ -1090,7 +1091,7 @@ NAOS_TEST(an_attribute_that_is_set_again_is_replaced)
     NAOS_CHECK_TRUE(argx_option_is_required(value));
     NAOS_CHECK_INT_EQ(argx_option_set_required(value, false), ARGX_ERROR_NONE);
     NAOS_CHECK_FALSE(argx_option_is_required(value));
-    check_attributes(value, NULL, "P", "-", false, false);
+    check_attributes(value, NULL, "P", "-", false, false, false);
 
     /* On, and off again. */
     NAOS_CHECK_INT_EQ(argx_option_set_initial(negatable, true), ARGX_ERROR_NONE);
@@ -1099,7 +1100,7 @@ NAOS_TEST(an_attribute_that_is_set_again_is_replaced)
     NAOS_CHECK_TRUE(argx_option_initial(negatable));
     NAOS_CHECK_INT_EQ(argx_option_set_initial(negatable, false), ARGX_ERROR_NONE);
     NAOS_CHECK_FALSE(argx_option_initial(negatable));
-    check_attributes(negatable, NULL, NULL, NULL, false, false);
+    check_attributes(negatable, NULL, NULL, NULL, false, false, false);
 
     destroy_root(root);
 }
@@ -1113,12 +1114,12 @@ NAOS_TEST(the_initial_state_of_a_negatable_flag_is_set_and_read)
     size_t requests = argx_test_allocator_requests();
 
     NAOS_CHECK_INT_EQ(argx_option_set_initial(color, true), ARGX_ERROR_NONE);
-    check_attributes(color, NULL, NULL, NULL, false, true);
-    check_attributes(pager, NULL, NULL, NULL, false, false);
+    check_attributes(color, NULL, NULL, NULL, false, true, false);
+    check_attributes(pager, NULL, NULL, NULL, false, false, false);
 
     /* Off can be set where nothing was set. */
     NAOS_CHECK_INT_EQ(argx_option_set_initial(pager, false), ARGX_ERROR_NONE);
-    check_attributes(pager, NULL, NULL, NULL, false, false);
+    check_attributes(pager, NULL, NULL, NULL, false, false, false);
 
     /* Nothing is allocated for a state. */
     NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests);
@@ -1129,7 +1130,41 @@ NAOS_TEST(the_initial_state_of_a_negatable_flag_is_set_and_read)
      */
     check_option(color, root, ARGX_OPTION_NEGATABLE, 'c', "color", "no-color", NULL);
     NAOS_CHECK_INT_EQ(argx_option_set_description(color, "Use colors."), ARGX_ERROR_NONE);
-    check_attributes(color, "Use colors.", NULL, NULL, false, true);
+    check_attributes(color, "Use colors.", NULL, NULL, false, true, false);
+
+    destroy_root(root);
+}
+
+/*
+ * A flag can be made terminal, and not terminal again. Nothing is
+ * allocated for it, and the other attributes do not change.
+ */
+NAOS_TEST(a_flag_is_made_terminal_and_read)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *help = add(ARGX_OPTION_FLAG, root, 'h', "help");
+    argx_option_t *version = add(ARGX_OPTION_FLAG, root, '\0', "version");
+    size_t requests;
+
+    NAOS_CHECK_INT_EQ(argx_option_set_description(help, "Print this help."), ARGX_ERROR_NONE);
+    requests = argx_test_allocator_requests();
+
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(help, true), ARGX_ERROR_NONE);
+    check_attributes(help, "Print this help.", NULL, NULL, false, false, true);
+    check_attributes(version, NULL, NULL, NULL, false, false, false);
+
+    /* The same value again, then not terminal. */
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(help, true), ARGX_ERROR_NONE);
+    NAOS_CHECK_TRUE(argx_option_is_terminal(help));
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(help, false), ARGX_ERROR_NONE);
+    check_attributes(help, "Print this help.", NULL, NULL, false, false, false);
+
+    /* Not terminal can be set where nothing was set. */
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(version, false), ARGX_ERROR_NONE);
+    check_attributes(version, NULL, NULL, NULL, false, false, false);
+
+    NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests);
+    check_option(help, root, ARGX_OPTION_FLAG, 'h', "help", NULL, NULL);
 
     destroy_root(root);
 }
@@ -1163,11 +1198,22 @@ static void check_takes_no_initial_state(argx_option_t *option)
     NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests);
 }
 
+/* Checks that option cannot be made terminal, or not terminal. */
+static void check_takes_no_terminal(argx_option_t *option)
+{
+    const size_t requests = argx_test_allocator_requests();
+
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(option, true), ARGX_ERROR_INVALID_DEFINITION);
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(option, false), ARGX_ERROR_INVALID_DEFINITION);
+
+    NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests);
+}
+
 /*
  * The value name, required and the default value are for an
- * option with a value only, and the initial state is for a negatable flag
- * only. On another kind the set is an inconsistent definition and changes
- * nothing.
+ * option with a value only, the initial state is for a negatable flag
+ * only, and terminal is for a flag only. On another kind the set is an
+ * inconsistent definition and changes nothing.
  */
 NAOS_TEST(an_attribute_of_another_kind_is_an_inconsistent_definition)
 {
@@ -1185,14 +1231,18 @@ NAOS_TEST(an_attribute_of_another_kind_is_an_inconsistent_definition)
     check_takes_no_attribute_of_a_value(count);
     check_takes_no_initial_state(count);
     check_takes_no_initial_state(value);
+    check_takes_no_terminal(negatable);
+    check_takes_no_terminal(count);
+    check_takes_no_terminal(value);
 
-    check_attributes(flag, NULL, NULL, NULL, false, false);
-    check_attributes(negatable, NULL, NULL, NULL, false, false);
-    check_attributes(count, NULL, NULL, NULL, false, false);
-    check_attributes(value, NULL, NULL, NULL, false, false);
+    check_attributes(flag, NULL, NULL, NULL, false, false, false);
+    check_attributes(negatable, NULL, NULL, NULL, false, false, false);
+    check_attributes(count, NULL, NULL, NULL, false, false, false);
+    check_attributes(value, NULL, NULL, NULL, false, false, false);
 
     /* Options with every attribute that they can have. */
     NAOS_CHECK_INT_EQ(argx_option_set_description(flag, "Flag."), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(flag, true), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_description(negatable, "Negatable."), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_initial(negatable, true), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_description(count, "Count."), ARGX_ERROR_NONE);
@@ -1207,12 +1257,15 @@ NAOS_TEST(an_attribute_of_another_kind_is_an_inconsistent_definition)
     check_takes_no_attribute_of_a_value(count);
     check_takes_no_initial_state(count);
     check_takes_no_initial_state(value);
+    check_takes_no_terminal(negatable);
+    check_takes_no_terminal(count);
+    check_takes_no_terminal(value);
 
     /* Every value is as it was, and so is the rest of the tree. */
-    check_attributes(flag, "Flag.", NULL, NULL, false, false);
-    check_attributes(negatable, "Negatable.", NULL, NULL, false, true);
-    check_attributes(count, "Count.", NULL, NULL, false, false);
-    check_attributes(value, "Value.", "FILE", "a.out", false, false);
+    check_attributes(flag, "Flag.", NULL, NULL, false, false, true);
+    check_attributes(negatable, "Negatable.", NULL, NULL, false, true, false);
+    check_attributes(count, "Count.", NULL, NULL, false, false, false);
+    check_attributes(value, "Value.", "FILE", "a.out", false, false, false);
     NAOS_CHECK_UINT_EQ(argx_test_allocator_live(), live);
     NAOS_CHECK_UINT_EQ(argx_command_option_count(root), 4);
     check_option(flag, root, ARGX_OPTION_FLAG, 'v', "verbose", NULL, NULL);
@@ -1223,7 +1276,8 @@ NAOS_TEST(an_attribute_of_another_kind_is_an_inconsistent_definition)
     /* The same with a required option. */
     NAOS_CHECK_INT_EQ(argx_option_set_required(value, true), ARGX_ERROR_NONE);
     check_takes_no_initial_state(value);
-    check_attributes(value, "Value.", "FILE", "a.out", true, false);
+    check_takes_no_terminal(value);
+    check_attributes(value, "Value.", "FILE", "a.out", true, false, false);
 
     /*
      * The schema can be used after the failures: the attributes that the
@@ -1232,9 +1286,9 @@ NAOS_TEST(an_attribute_of_another_kind_is_an_inconsistent_definition)
     NAOS_CHECK_INT_EQ(argx_option_set_description(flag, "Still a flag."), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_initial(negatable, false), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_value_name(value, "PATH"), ARGX_ERROR_NONE);
-    check_attributes(flag, "Still a flag.", NULL, NULL, false, false);
-    check_attributes(negatable, "Negatable.", NULL, NULL, false, false);
-    check_attributes(value, "Value.", "PATH", "a.out", true, false);
+    check_attributes(flag, "Still a flag.", NULL, NULL, false, false, true);
+    check_attributes(negatable, "Negatable.", NULL, NULL, false, false, false);
+    check_attributes(value, "Value.", "PATH", "a.out", true, false, false);
     (void)add(ARGX_OPTION_FLAG, root, 'x', NULL);
     NAOS_CHECK_UINT_EQ(argx_command_option_count(root), 5);
 
@@ -1264,13 +1318,13 @@ NAOS_TEST(the_strings_of_the_attributes_are_copied)
     NAOS_CHECK_TRUE(argx_option_description(option) != description);
     NAOS_CHECK_TRUE(argx_option_value_name(option) != value_name);
     NAOS_CHECK_TRUE(argx_option_default(option) != default_value);
-    check_attributes(option, "Where the output goes.", "FILE", "a.out", false, false);
+    check_attributes(option, "Where the output goes.", "FILE", "a.out", false, false, false);
 
     /* The same when a value is replaced. */
     memcpy(value_name, "PATH", sizeof(value_name));
     NAOS_CHECK_INT_EQ(argx_option_set_value_name(option, value_name), ARGX_ERROR_NONE);
     memset(value_name, 'y', sizeof(value_name) - 1);
-    check_attributes(option, "Where the output goes.", "PATH", "a.out", false, false);
+    check_attributes(option, "Where the output goes.", "PATH", "a.out", false, false, false);
 
     destroy_root(root);
 }
@@ -1289,7 +1343,7 @@ NAOS_TEST(an_attribute_can_be_set_with_a_string_that_was_read)
                       ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_description(option, argx_option_long_name(option)),
                       ARGX_ERROR_NONE);
-    check_attributes(option, "output", "FILE", "FILE", false, false);
+    check_attributes(option, "output", "FILE", "FILE", false, false, false);
     NAOS_CHECK_TRUE(argx_option_default(option) != argx_option_value_name(option));
 
     destroy_root(root);
@@ -1308,11 +1362,11 @@ NAOS_TEST(required_and_a_default_value_are_both_kept)
 
     NAOS_CHECK_INT_EQ(argx_option_set_required(first, true), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_default(first, "1"), ARGX_ERROR_NONE);
-    check_attributes(first, NULL, NULL, "1", true, false);
+    check_attributes(first, NULL, NULL, "1", true, false, false);
 
     NAOS_CHECK_INT_EQ(argx_option_set_default(second, "2"), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_option_set_required(second, true), ARGX_ERROR_NONE);
-    check_attributes(second, NULL, NULL, "2", true, false);
+    check_attributes(second, NULL, NULL, "2", true, false, false);
 
     destroy_root(root);
 }
@@ -1627,6 +1681,7 @@ NAOS_SUITE(attribute,
     NAOS_ADD_TEST(the_attributes_of_an_option_with_a_value_are_set_and_read),
     NAOS_ADD_TEST(an_attribute_that_is_set_again_is_replaced),
     NAOS_ADD_TEST(the_initial_state_of_a_negatable_flag_is_set_and_read),
+    NAOS_ADD_TEST(a_flag_is_made_terminal_and_read),
     NAOS_ADD_TEST(an_attribute_of_another_kind_is_an_inconsistent_definition),
     NAOS_ADD_TEST(the_strings_of_the_attributes_are_copied),
     NAOS_ADD_TEST(an_attribute_can_be_set_with_a_string_that_was_read),

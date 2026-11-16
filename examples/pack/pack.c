@@ -7,11 +7,11 @@
  *
  *   1. creates a choice value type and a user-defined value type;
  *   2. defines the schema: every kind of option, positionals, subcommands,
- *      descriptions and a summary for the help, and -h, --help on every
- *      command;
+ *      descriptions and a summary for the help, and a terminal -h, --help on
+ *      every command;
  *   3. validates it, and tells which definition a failed validation points to;
- *   4. parses argv and branches on the error code, reading --help in both
- *      cases that give a result;
+ *   4. parses argv and branches on the error code, and on whether --help
+ *      ended the parse;
  *   5. prints the help of the selected command, also when a subcommand is
  *      missing, or the message and the usage line of any other parse error;
  *   6. reads the values and where they came from;
@@ -65,7 +65,7 @@
  *   ...
  *
  * "pack" exits with a failure status, "pack --help" with success. "pack
- * create --help" prints the help of create.
+ * create --help" prints the help of create, although --output is missing.
  */
 
 #include <argx/argx.h>
@@ -193,7 +193,9 @@ static argx_error_t create_types(pack_schema_t *schema, size_limit_t *limit)
 /*
  * Adds -h, --help to command. The library adds no such option by itself, and
  * an option is only known where its command is the current command, so
- * every command gets its own.
+ * every command gets its own. It is terminal: reading it ends the parse,
+ * which then succeeds, so "pack --help" and "pack create --help" are not
+ * parse errors although they leave out what is required.
  */
 static argx_error_t add_help(argx_command_t *command)
 {
@@ -201,7 +203,8 @@ static argx_error_t add_help(argx_command_t *command)
     argx_error_t error;
 
     TRY(argx_command_add_flag(command, 'h', "help", &option));
-    return argx_option_set_description(option, "Print this help.");
+    TRY(argx_option_set_description(option, "Print this help."));
+    return argx_option_set_terminal(option, true);
 }
 
 /*
@@ -357,28 +360,6 @@ static void report_fault(argx_error_t error, const argx_command_t *command,
                     argx_positional_default(positional));
         }
     }
-}
-
-/*
- * Tells whether --help or -h was given to one of the selected commands. --help
- * is a flag like any other, so this also works on a result with a parse
- * error: it holds what was read before the error.
- */
-static bool help_was_given(const argx_result_t *result)
-{
-    size_t i;
-
-    for (i = 0; i < argx_result_command_count(result); ++i)
-    {
-        const argx_command_t *command = argx_result_command_at(result, i);
-        const argx_option_t *help = argx_command_find_long(command, "help", 4, NULL);
-
-        if ((help != NULL) && argx_result_flag(result, help))
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 /*
@@ -569,8 +550,12 @@ int main(int argc, char **argv)
     switch (error)
     {
     case ARGX_ERROR_NONE:
-        /* 5, 6. --help is a flag like any other: read it, then the rest. */
-        if (help_was_given(result))
+        /*
+         * 5, 6. --help, the only terminal flag of pack, ended the parse: the
+         * help of the command it was given to. Nothing was resolved then, so
+         * the values are read only otherwise.
+         */
+        if (argx_result_terminal_option(result) != NULL)
         {
             status = print_help(result);
         }
@@ -583,15 +568,9 @@ int main(int argc, char **argv)
     case ARGX_ERROR_INVALID_COMMAND_LINE:
         /*
          * 5. A parse error also gives a result, holding what was read before
-         * the error. "pack create --help" leaves out what create requires,
-         * and "pack --help" the subcommand, but --help was read, so the help
-         * is printed, not the error.
+         * the error, with the command it was found in.
          */
-        if (help_was_given(result))
-        {
-            status = print_help(result);
-        }
-        else if (argx_result_error_kind(result) == ARGX_PARSE_ERROR_MISSING_SUBCOMMAND)
+        if (argx_result_error_kind(result) == ARGX_PARSE_ERROR_MISSING_SUBCOMMAND)
         {
             /*
              * A command line that ends without a subcommand: the help of the

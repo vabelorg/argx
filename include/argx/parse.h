@@ -111,7 +111,7 @@ typedef enum argx_parse_error_kind
  * The other arguments are read once each, from first to last, and matched
  * against the current command: root at first, then the subcommand named
  * last (see below). The scan stops at the first argument that does not
- * match the schema.
+ * match the schema, and after a terminal flag (see below).
  *
  * An argument that starts with "--" and has more characters is a long
  * option. Its name ends before the first '='. The name is compared as a
@@ -219,6 +219,30 @@ typedef enum argx_parse_error_kind
  * option's value type when it is read, including a value that is replaced
  * later.
  *
+ * A terminal flag (argx_option_set_terminal()) ends the parse. When one is
+ * read, as a long option or as a letter of a bundle, it is recorded as
+ * given, and then:
+ *
+ * - The arguments after it are not read: they are not checked, not
+ *   matched against options and do not name subcommands, so they cause no
+ *   parse error. The letters after it in the same bundle are not matched
+ *   either.
+ * - Nothing is resolved (see below): nothing required is checked and
+ *   nothing gets its default value.
+ * - The parse succeeds. argx_result_command() returns the command that was
+ *   current when the flag was read, and argx_result_terminal_option()
+ *   returns the flag.
+ *
+ * Everything before the terminal flag is read as usual, so a parse error
+ * there is still reported. A terminal flag is recognized only where an
+ * option is: "--help=x" is a parse error, as for any flag; after the
+ * terminator, and as the value of an option that takes a value, it is not
+ * an option at all.
+ *
+ *     tool --help         succeeds, even if tool requires a subcommand
+ *     tool --help --bad   succeeds: --bad is not read
+ *     tool --bad --help   the parse error of --bad
+ *
  * When the last argument has been read without a parse error, the values
  * are resolved for the selected commands only: the root and every
  * subcommand that was named. A command that was not selected is neither
@@ -261,7 +285,8 @@ typedef enum argx_parse_error_kind
  * What is returned, and what is written to *out:
  *
  *     ARGX_ERROR_NONE                  a result  The command line matches
- *                                                the schema.
+ *                                                the schema, or a
+ *                                                terminal flag ended it.
  *     ARGX_ERROR_INVALID_COMMAND_LINE  a result  It does not. The result
  *                                                holds the parse error and
  *                                                what was read before it.
@@ -280,6 +305,12 @@ typedef enum argx_parse_error_kind
  * takes a value and a positional that were not given have no value, even
  * if they have a default value. A flag, a count and a negatable flag that
  * were not given read as not given, 0 and the initial state.
+ *
+ * A result that a terminal flag ended holds the same: what was read up to
+ * and including the flag, and no default values. Something required may
+ * be missing, although the parse succeeded. So check the terminal flags
+ * first (argx_result_flag() or argx_result_terminal_option()), and read
+ * the rest only when none was given.
  *
  * Ownership:
  *
@@ -399,6 +430,21 @@ ARGX_API argx_error_t argx_result_error(const argx_result_t *result);
 ARGX_API size_t argx_result_command_count(const argx_result_t *result);
 ARGX_API const argx_command_t *argx_result_command_at(const argx_result_t *result, size_t index);
 ARGX_API const argx_command_t *argx_result_command(const argx_result_t *result);
+
+/*
+ * Returns the terminal flag that ended the parse (argx_option_set_terminal()),
+ * or NULL when none did: when the command line was read to its end, or has
+ * a parse error. A result that returns a flag here was not resolved:
+ * nothing required was checked and no default value was given (see
+ * argx_parse()).
+ *
+ * The flag belongs to the schema.
+ *
+ * Preconditions:
+ *
+ * - result is not NULL. Checked with assert.
+ */
+ARGX_API const argx_option_t *argx_result_terminal_option(const argx_result_t *result);
 
 /*
  * Read an option that takes no value.

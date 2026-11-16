@@ -8,11 +8,11 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 | --- | --- |
 | `argx_command_create`, `argx_command_destroy`, `argx_command_add_subcommand`, `argx_command_set_description`, `argx_command_set_summary`, `argx_command_set_subcommand_optional` | [Commands](#commands) |
 | `argx_command_add_flag`, `argx_command_add_negatable`, `argx_command_add_count`, `argx_command_add_value` | [Options](#options) |
-| `argx_option_set_description`, `argx_option_set_value_name`, `argx_option_set_required`, `argx_option_set_default`, `argx_option_set_initial` | [Attributes](#attributes) |
+| `argx_option_set_description`, `argx_option_set_value_name`, `argx_option_set_required`, `argx_option_set_default`, `argx_option_set_initial`, `argx_option_set_terminal` | [Attributes](#attributes) |
 | `argx_command_add_positional`, `argx_positional_set_description`, `argx_positional_set_default` | [Positionals](#positionals) |
 | `argx_command_validate`, `argx_command_is_validated` | [Validation](#validation) |
 | `argx_command_name`, `argx_command_description`, `argx_command_summary`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_option_count`, `argx_command_option_at`, `argx_command_positional_count`, `argx_command_positional_at`, `argx_command_subcommand_count`, `argx_command_subcommand_at`, `argx_command_find_short`, `argx_command_find_long`, `argx_command_find_subcommand` | [Reading a schema](#reading-a-schema) |
-| `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial` | [Reading a schema](#reading-a-schema) |
+| `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial`, `argx_option_is_terminal` | [Reading a schema](#reading-a-schema) |
 | `argx_positional_command`, `argx_positional_name`, `argx_positional_arity`, `argx_positional_type`, `argx_positional_description`, `argx_positional_default` | [Reading a schema](#reading-a-schema) |
 
 ## Commands
@@ -56,10 +56,12 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 | Required | `argx_option_set_required` | `ARGX_OPTION_VALUE` | `false` |
 | Default value | `argx_option_set_default` | `ARGX_OPTION_VALUE` | `NULL` |
 | Initial state | `argx_option_set_initial` | `ARGX_OPTION_NEGATABLE` | `false` |
+| Terminal | `argx_option_set_terminal` | `ARGX_OPTION_FLAG` | `false` |
 
 - Setting an attribute on a kind it does not apply to is an error, whatever the value.
 - A default value is written as on the command line; validation checks that it converts.
 - Required together with a default is a validation error.
+- A terminal flag ends the parse when it is read: the parse succeeds without reading the arguments after it and without checking what is required. Use it for `--help` and `--version` ([Terminal flags](parse.md#terminal-flags)). It does not change the help.
 - The description and value name only affect the help. Without a value name, the type name is shown. A newline in a value name breaks the help columns ([Limits](help-layout.md#limits)).
 
 ## Positionals
@@ -172,6 +174,7 @@ Within a function, the first matching row is returned. Every function can also r
 | --- | --- | --- |
 | `argx_option_set_value_name`, `argx_option_set_required`, `argx_option_set_default` | Not an option with a value | `ARGX_ERROR_INVALID_DEFINITION` |
 | `argx_option_set_initial` | Not a negatable flag | `ARGX_ERROR_INVALID_DEFINITION` |
+| `argx_option_set_terminal` | Not a flag | `ARGX_ERROR_INVALID_DEFINITION` |
 | `argx_positional_set_default` | Arity is not `ARGX_ARITY_OPTIONAL` | `ARGX_ERROR_INVALID_DEFINITION` |
 
 ### Errors found by validation
@@ -224,7 +227,7 @@ The read functions take `const` handles, change nothing and never fail.
 | Command | `argx_command_name`, `argx_command_description`, `argx_command_summary`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_is_validated` |
 | Enumeration | `argx_command_option_count`/`_at`, `argx_command_positional_count`/`_at`, `argx_command_subcommand_count`/`_at` |
 | Lookup | `argx_command_find_short`, `argx_command_find_long`, `argx_command_find_subcommand` |
-| Option | `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial` |
+| Option | `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial`, `argx_option_is_terminal` |
 | Positional | `argx_positional_command`, `argx_positional_name`, `argx_positional_arity`, `argx_positional_type`, `argx_positional_description`, `argx_positional_default` |
 
 - Enumeration follows the order added, from index 0.

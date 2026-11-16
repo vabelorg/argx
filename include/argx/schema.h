@@ -492,6 +492,12 @@ ARGX_API const argx_type_t *argx_option_type(const argx_option_t *option);
  * - argx_option_set_initial(): the initial state of a negatable flag,
  *   ARGX_OPTION_NEGATABLE, which is its state when it is not given: true
  *   for on and false for off. Only for a negatable flag.
+ * - argx_option_set_terminal(): whether the flag is terminal: reading it
+ *   ends the parse, which then succeeds without reading the arguments
+ *   after it and without resolving what was not given. Use it for a flag
+ *   such as --help or --version, which asks the program to do one thing
+ *   and stop. Only for a flag, ARGX_OPTION_FLAG. See argx_parse() in
+ *   <argx/parse.h>.
  *
  * Strings are copied. The empty string can be set; it is not the same as
  * an unset attribute. Setting an attribute again replaces its earlier
@@ -517,6 +523,7 @@ ARGX_API argx_error_t argx_option_set_value_name(argx_option_t *option, const ch
 ARGX_API argx_error_t argx_option_set_required(argx_option_t *option, bool required);
 ARGX_API argx_error_t argx_option_set_default(argx_option_t *option, const char *value);
 ARGX_API argx_error_t argx_option_set_initial(argx_option_t *option, bool on);
+ARGX_API argx_error_t argx_option_set_terminal(argx_option_t *option, bool terminal);
 
 /*
  * Returns the description of option, or NULL when none has been set.
@@ -566,6 +573,16 @@ ARGX_API const char *argx_option_default(const argx_option_t *option);
  * - option is not NULL. Checked with assert.
  */
 ARGX_API bool argx_option_initial(const argx_option_t *option);
+
+/*
+ * Returns whether option is terminal. It is false until set, and always
+ * false for an option that is not a flag.
+ *
+ * Preconditions:
+ *
+ * - option is not NULL. Checked with assert.
+ */
+ARGX_API bool argx_option_is_terminal(const argx_option_t *option);
 
 /* ---- Positionals -------------------------------------------------------- */
 

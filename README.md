@@ -82,6 +82,7 @@ int main(int argc, char **argv)
     TRY(argx_command_set_description(root, "Greet somebody."));
     TRY(argx_command_add_flag(root, 'h', "help", &help));
     TRY(argx_option_set_description(help, "Print this help."));
+    TRY(argx_option_set_terminal(help, true)); /* "greet --help" succeeds without a name. */
     TRY(argx_command_add_flag(root, 'l', "loud", &loud));
     TRY(argx_option_set_description(loud, "Add an exclamation mark."));
     TRY(argx_command_add_value(root, 'n', "count", argx_type_int(), &count));
@@ -120,15 +121,7 @@ int main(int argc, char **argv)
         break;
 
     case ARGX_ERROR_INVALID_COMMAND_LINE:
-        /* The result holds what was read before the error: "greet --help" works without a name. */
-        if (argx_result_flag(result, help))
-        {
-            status = print_help(root);
-        }
-        else
-        {
-            print_parse_error(result);
-        }
+        print_parse_error(result);
         break;
 
     default:

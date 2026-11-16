@@ -12,11 +12,11 @@ Parsing and help generation print nothing, never end the process and read no env
 
 ## `--help` is an ordinary option
 
-The library defines no option of its own. `--help` is a flag that the program adds and reads like any other.
+The library defines no option of its own. `--help` is a flag that the program adds and reads like any other. Made terminal, it ends the parse with success, so a command line that asks only for the help is not a parse error although it leaves out what is required.
 
-- **Why:** the library does not print, so it cannot answer `--help` itself. The program also chooses the names and where the help goes.
-- **Cost:** the program defines `--help` on every command and reads it also when the parse returns a parse error.
-- **Rules:** [`--help`](../references/parse.md#--help).
+- **Why:** the library does not print, so it cannot answer `--help` itself. The program also chooses the names and where the help goes. A terminal flag keeps that rule: the library still prints nothing and ends no process, and only stops reading.
+- **Cost:** the program defines `--help` on every command and makes each one terminal. A success that a terminal flag ended has nothing required checked and no default applied, so the program checks the flag before it reads the rest.
+- **Rules:** [Terminal flags](../references/parse.md#terminal-flags), [`--help`](../references/parse.md#--help).
 
 ## A schema is validated before it is used
 
@@ -39,7 +39,7 @@ A failure that can happen in a correct program returns an `argx_error_t`. A mist
 
 When the command line does not match the schema, `argx_parse` returns `ARGX_ERROR_INVALID_COMMAND_LINE` and still writes a result that holds the kind, the message and the details of the error.
 
-- **Why:** no separate error object is needed, the program can still see a `--help` given before the error, and new kinds of parse error do not add error codes.
+- **Why:** no separate error object is needed, the program can still see what was given before the error, and new kinds of parse error do not add error codes.
 - **Cost:** unlike other failures, the output is not `NULL`, and the result must be destroyed.
 - **Rules:** [Parse errors](../references/parse.md#parse-errors).
 

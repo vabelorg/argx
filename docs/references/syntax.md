@@ -27,6 +27,7 @@ Each element is classified by the first matching row.
 - An element taken as the value of an option is not classified: in `--name -x` and `--name --`, `-x` and `--` are values.
 - Names are compared whole, byte by byte, and case-sensitively. Prefixes do not match.
 - If the current command has a digit short name, `-1` and `-.5` are bundles; write negative numbers after the terminator.
+- A [terminal flag](parse.md#terminal-flags) ends the scan: the elements after it, and the letters after it in the same bundle, are not read.
 
 ## How options take values
 
@@ -78,7 +79,7 @@ Operands are assigned in order to the positionals in the order they were added. 
 
 ## Required checks and default values
 
-After the last element is read without a parse error, for the selected commands only:
+After the last element is read without a parse error, for the selected commands only. A parse that a [terminal flag](parse.md#terminal-flags) ended skips both steps.
 
 1. **Required checks.** A required option with a value that has no value, or a positional of `ARGX_ARITY_REQUIRED` or `ARGX_ARITY_ONE_OR_MORE` with no value, is `MISSING_OPTION` or `MISSING_POSITIONAL`. A last selected command whose subcommands are required is `MISSING_SUBCOMMAND`. The first one is reported: commands nearer the root first, then options before positionals, in the order added, and the missing subcommand after all of them. If the root of `tool` requires `--token` and a subcommand, `tool` alone reports `--token`, and `tool --token x` the subcommand.
 2. **Default values,** if nothing is missing. An option with a value or an `ARGX_ARITY_OPTIONAL` positional that was not given gets its converted default, with the source `ARGX_SOURCE_DEFAULT`.

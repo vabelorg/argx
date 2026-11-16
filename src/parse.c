@@ -12,6 +12,9 @@
  * from the result's copy, so that every string the result keeps a pointer
  * to is in that copy.
  *
+ * A terminal flag ends the scan: the arguments after it are not read, and
+ * the result is not resolved.
+ *
  * The scan state is an automatic variable of the scan. Nothing is kept
  * between two parses.
  */
@@ -38,6 +41,7 @@ typedef struct scan
      */
     size_t positional;
     bool has_digit_short;          /* Whether command has an option whose short name is a digit. */
+    bool stopped;                  /* Whether a terminal flag was read: the scan ends. */
 } scan_t;
 
 /* Makes command the current command of scan. */
@@ -119,6 +123,9 @@ static argx_error_t check_encoding(argx_result_t *result, const scan_t *scan)
  * argument, whatever it looks like, and scan moves on to it; where->index
  * is then set to that argument, the one that holds the value. The argument
  * is checked before it is taken (check_encoding()).
+ *
+ * A terminal flag is recorded like any flag, and then ends the scan: scan
+ * is marked as stopped.
  */
 static argx_error_t record_option(argx_result_t *result, scan_t *scan, const argx_option_t *option,
                                   bool on, const char *value, argx_result_where_t *where)
@@ -158,6 +165,11 @@ static argx_error_t record_option(argx_result_t *result, scan_t *scan, const arg
     {
     case ARGX_OPTION_FLAG:
         argx_result_record_flag(result, option);
+        if (argx_option_is_terminal(option))
+        {
+            argx_result_record_terminal(result, option);
+            scan->stopped = true;
+        }
         break;
     case ARGX_OPTION_COUNT:
         argx_result_record_count(result, option);
@@ -212,7 +224,8 @@ static argx_error_t scan_long(argx_result_t *result, scan_t *scan, const char *a
  * An option that takes a value ends the bundle. The characters after its
  * letter, whatever they are, are its value; when it is the last letter, it
  * takes the next argument (record_option()). Options before a letter that
- * fails stay recorded.
+ * fails stay recorded. A terminal flag ends the bundle too: the characters
+ * after its letter are not read.
  */
 static argx_error_t scan_bundle(argx_result_t *result, scan_t *scan, const char *arg)
 {
@@ -246,7 +259,7 @@ static argx_error_t scan_bundle(argx_result_t *result, scan_t *scan, const char 
         }
 
         error = record_option(result, scan, option, true, NULL, &where);
-        if (error != ARGX_ERROR_NONE)
+        if ((error != ARGX_ERROR_NONE) || scan->stopped)
         {
             return error;
         }
@@ -348,9 +361,11 @@ static argx_error_t scan_plain(argx_result_t *result, scan_t *scan, const char *
  * name. The current command is root at first, then the subcommand named
  * last. An option is looked up in the current command only, never in its
  * parent or its subcommands. Each argument is checked before it is read
- * (check_encoding()). Stops at the first error.
+ * (check_encoding()). Stops at the first error, and after a terminal flag;
+ * the arguments after it are not read or checked.
  *
- * Returns ARGX_ERROR_NONE when all the arguments were read,
+ * Returns ARGX_ERROR_NONE when all the arguments were read or a terminal
+ * flag ended the scan,
  * ARGX_ERROR_INVALID_COMMAND_LINE when a parse error was recorded, and
  * ARGX_ERROR_OUT_OF_MEMORY when an allocation failed.
  */
@@ -361,6 +376,7 @@ static argx_error_t scan_arguments(argx_result_t *result, const argx_command_t *
     enter_command(&scan, root);
     scan.count = count;
     scan.options_ended = false;
+    scan.stopped = false;
 
     for (scan.index = 1; scan.index < scan.count; scan.index++)
     {
@@ -415,7 +431,7 @@ static argx_error_t scan_arguments(argx_result_t *result, const argx_command_t *
             }
         }
 
-        if (error != ARGX_ERROR_NONE)
+        if ((error != ARGX_ERROR_NONE) || scan.stopped)
         {
             return error;
         }
@@ -427,8 +443,9 @@ static argx_error_t scan_arguments(argx_result_t *result, const argx_command_t *
 /*
  * Parses the arguments of result, a new result for root with count
  * arguments, and writes result to *out. It scans the arguments and, if the
- * scan ends without a parse error, resolves the values that were not
- * given ("parse_internal.h"). A result that cannot be completed because
+ * scan reads them all without a parse error, resolves the values that
+ * were not given ("parse_internal.h"). A scan that a terminal flag ended
+ * is not resolved. A result that cannot be completed because
  * memory runs out is destroyed, and NULL is written to *out.
  */
 static argx_error_t parse_result(argx_result_t *result, const argx_command_t *root, size_t count,
@@ -436,7 +453,7 @@ static argx_error_t parse_result(argx_result_t *result, const argx_command_t *ro
 {
     argx_error_t error = scan_arguments(result, root, count);
 
-    if (error == ARGX_ERROR_NONE)
+    if ((error == ARGX_ERROR_NONE) && (argx_result_terminal_option(result) == NULL))
     {
         error = argx_resolve(result);
     }

@@ -872,6 +872,49 @@ NAOS_TEST(an_argument_after_the_terminator_is_checked_too)
     tear_down(&fixture);
 }
 
+/*
+ * A terminal flag ends the parse before the argument after it is read, so
+ * that argument is not checked either. One before the flag still is.
+ */
+NAOS_TEST(an_argument_after_a_terminal_flag_is_not_checked)
+{
+    fixture_t fixture;
+    argx_option_t *help = NULL;
+    wchar_t bad[] = { L'\0', L'\0' };
+    wchar_t bundle[] = { L'-', L'h', L'\0', L'\0' };
+    wchar_t *after[] = { L"tool", L"--help", NULL };
+    wchar_t *in_bundle[] = { L"tool", NULL };
+    wchar_t *before[] = { L"tool", NULL, L"--help" };
+    argx_result_t *result;
+
+    bad[0] = BAD_UNIT;
+    bundle[2] = BAD_UNIT;
+    after[2] = bad;
+    in_bundle[1] = bundle;
+    before[1] = bad;
+
+    set_up(&fixture);
+    NAOS_REQUIRE_TRUE(argx_command_add_flag(fixture.root, 'h', "help", &help) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_terminal(help, true) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_command_validate(fixture.root, NULL, NULL, NULL) == ARGX_ERROR_NONE);
+
+    result = parse_wide_ok(&fixture, ARGC(after), after);
+    NAOS_CHECK_TRUE(argx_result_terminal_option(result) == help);
+    argx_result_destroy(result);
+
+    /*
+     * An argument is checked as a whole before it is read: a unit after
+     * the letter of the terminal flag is still an error.
+     */
+    expect_invalid_encoding(&fixture, ARGC(in_bundle), in_bundle, "-h" REPLACEMENT, 1, fixture.root,
+                            "invalid character encoding in argument '-h" REPLACEMENT "'");
+
+    expect_invalid_encoding(&fixture, ARGC(before), before, REPLACEMENT, 1, fixture.root,
+                            "invalid character encoding in argument '" REPLACEMENT "'");
+
+    tear_down(&fixture);
+}
+
 NAOS_TEST(the_current_command_of_the_error_is_the_one_selected_before_the_argument)
 {
     fixture_t fixture;
@@ -1085,6 +1128,7 @@ NAOS_SUITE(invalid_encoding,
     NAOS_ADD_TEST(an_option_with_a_unit_that_cannot_be_converted_is_not_looked_up),
     NAOS_ADD_TEST(an_argument_that_would_be_taken_as_a_value_is_checked_before_it_is_taken),
     NAOS_ADD_TEST(an_argument_after_the_terminator_is_checked_too),
+    NAOS_ADD_TEST(an_argument_after_a_terminal_flag_is_not_checked),
     NAOS_ADD_TEST(the_current_command_of_the_error_is_the_one_selected_before_the_argument),
     NAOS_ADD_TEST(of_two_arguments_that_cannot_be_converted_the_first_is_reported),
     NAOS_ADD_TEST(an_error_of_an_earlier_argument_is_reported_instead),

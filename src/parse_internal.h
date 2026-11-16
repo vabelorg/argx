@@ -90,6 +90,7 @@ struct argx_result
     const argx_positional_t *error_positional;
     char error_short_name;
     char *error_message;        /* Owned. NULL when there is none. */
+    const argx_option_t *terminal; /* The terminal flag that ended the scan, or NULL. */
 };
 
 /* ---- Creation ----------------------------------------------------------- */
@@ -190,6 +191,19 @@ argx_error_t argx_result_push_command(argx_result_t *result, const argx_command_
 void argx_result_record_flag(argx_result_t *result, const argx_option_t *option);
 void argx_result_record_state(argx_result_t *result, const argx_option_t *option, bool on);
 void argx_result_record_count(argx_result_t *result, const argx_option_t *option);
+
+/*
+ * Records that the scan ended at option, a terminal flag that was just
+ * recorded as given (argx_result_record_flag()).
+ * argx_result_terminal_option() then returns option.
+ *
+ * Preconditions, checked with assert:
+ *
+ * - result and option are not NULL.
+ * - option is a terminal flag that is given in result.
+ * - result has no parse error, and no terminal flag was recorded before.
+ */
+void argx_result_record_terminal(argx_result_t *result, const argx_option_t *option);
 
 /*
  * The location of a parse error. When a value is recorded, it is where

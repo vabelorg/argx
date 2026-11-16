@@ -26,6 +26,10 @@ argx_add_example_test(pack commands
 argx_add_example_test(pack list-help
     "^Usage: pack list \\[OPTIONS\\] <archive> \\[pattern\\]\r?\n\r?\nPrint the names of the files in an archive that match a pattern, one per line\\.\r?\n"
     ARGS list --help)
+# --help ends the parse: what follows it is not read.
+argx_add_example_test(pack help-before-error
+    "^Usage: pack create \\[OPTIONS\\] --output <FILE> <file>\\.\\.\\.\r?\n\r?\nCreate an archive\\.\r?\n"
+    ARGS create -h --bogus)
 argx_add_example_test(pack parse-error
     "^pack: missing required option '--output'\r?\nUsage: pack create \\[OPTIONS\\] --output <FILE> <file>\\.\\.\\.\r?\nFor more information, try '--help'\\.\r?\n$"
     ARGS create a.txt)

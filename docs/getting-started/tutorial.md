@@ -20,7 +20,7 @@ The steps are numbered the same way in the comments of `main`.
 | 1. Create the value types | `create_types`, `convert_size` |
 | 2. Define the schema | `define_schema`, `define_root`, `define_create`, `define_list`, `add_help` |
 | 3. Validate it | `main`, `report_fault` |
-| 4. Parse argv, and branch on the error code | `main`, `help_was_given` |
+| 4. Parse argv, and branch on the error code | `main` |
 | 5. Print the help or the parse error | `print_help`, `print_parse_error`, `write_to_stream` |
 | 6. Read the values | `run`, `run_create`, `run_list` |
 | 7. Destroy everything | `main` |
@@ -64,7 +64,7 @@ A failed add function writes a `NULL` handle, so stop at the first failure.
 
 **Subcommands are required by default.** `pack` alone is the parse error `MISSING_SUBCOMMAND`, and the usage line shows `<COMMAND>`. Like most programs with subcommands, `pack` then prints the help ([step 4](#4-parse-argv-and-branch-on-the-error-code)). To make a subcommand optional, or to print the error message instead, see [How-to](../guides/how-to.md#allowing-a-command-line-without-a-subcommand).
 
-**Define `--help` on every command.** The library adds none, and an option is recognized only on its own command ([`--help`](../references/parse.md#--help)). `add_help`:
+**Define `--help` on every command, and make it terminal.** The library adds none, and an option is recognized only on its own command ([`--help`](../references/parse.md#--help)). A terminal flag ends the parse with success when it is read, so `pack --help` and `pack create --help` are not parse errors although they leave out the subcommand and `--output` ([Terminal flags](../references/parse.md#terminal-flags)). `add_help`:
 
 ```c
 static argx_error_t add_help(argx_command_t *command)
@@ -73,7 +73,8 @@ static argx_error_t add_help(argx_command_t *command)
     argx_error_t error;
 
     TRY(argx_command_add_flag(command, 'h', "help", &option));
-    return argx_option_set_description(option, "Print this help.");
+    TRY(argx_option_set_description(option, "Print this help."));
+    return argx_option_set_terminal(option, true);
 }
 ```
 
@@ -103,8 +104,8 @@ error = argx_parse(schema.root, argc, argv, &result);
 switch (error)
 {
 case ARGX_ERROR_NONE:
-    /* --help is a flag like any other: read it, then the rest. */
-    if (help_was_given(result))
+    /* --help, the only terminal flag of pack, ended the parse. */
+    if (argx_result_terminal_option(result) != NULL)
     {
         status = print_help(result);
     }
@@ -115,12 +116,8 @@ case ARGX_ERROR_NONE:
     break;
 
 case ARGX_ERROR_INVALID_COMMAND_LINE:
-    /* The result holds what was read before the error, --help included. */
-    if (help_was_given(result))
-    {
-        status = print_help(result);
-    }
-    else if (argx_result_error_kind(result) == ARGX_PARSE_ERROR_MISSING_SUBCOMMAND)
+    /* The result holds what was read before the error. */
+    if (argx_result_error_kind(result) == ARGX_PARSE_ERROR_MISSING_SUBCOMMAND)
     {
         /* No subcommand: the help, and a failure, since nothing was done. */
         (void)print_help(result);
@@ -141,24 +138,8 @@ default:
 
 - **`argx_parse` returns one of three codes.** `ARGX_ERROR_OUT_OF_MEMORY` is the only one that leaves no result, so `default` handles it.
 - **A parse error also gives a result,** which holds what was read before the error and which you destroy like any other.
-- **Read `--help` in both cases.** It is an ordinary flag. `pack create --help` omits the required `--output`, and `pack --help` the subcommand, so both are parse errors, but `--help` was read before the error and reads as given.
+- **Check the terminal flag before anything else.** `argx_result_terminal_option` returns the terminal flag that ended the parse, or `NULL`. After `pack create --help`, the required `--output` may be missing and no default value was applied, so `run` must not read the values. A program with several terminal flags, such as `--help` and `--version`, compares the returned flag with each, or reads each with `argx_result_flag`.
 - **Branch on the kind of a parse error to treat one differently.** A command line without a subcommand prints the help of the command it ended in, as most programs with subcommands do, and fails. Every other parse error prints its message and the usage line.
-
-`help_was_given` reads the `--help` of each selected command:
-
-```c
-for (i = 0; i < argx_result_command_count(result); ++i)
-{
-    const argx_command_t *command = argx_result_command_at(result, i);
-    const argx_option_t *help = argx_command_find_long(command, "help", 4, NULL);
-
-    if ((help != NULL) && argx_result_flag(result, help))
-    {
-        return true;
-    }
-}
-return false;
-```
 
 ## 5. Print the help or the parse error
 

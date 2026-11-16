@@ -104,6 +104,7 @@ static argx_option_t *new_option(argx_command_t *command, argx_option_kind_t kin
     option->default_value = NULL;
     option->required = false;
     option->initial = false;
+    option->terminal = false;
 
     if (long_name != NULL)
     {
@@ -328,6 +329,21 @@ argx_error_t argx_option_set_initial(argx_option_t *option, bool on)
     return ARGX_ERROR_NONE;
 }
 
+argx_error_t argx_option_set_terminal(argx_option_t *option, bool terminal)
+{
+    assert(option != NULL);
+
+    if (option->kind != ARGX_OPTION_FLAG)
+    {
+        return ARGX_ERROR_INVALID_DEFINITION;
+    }
+
+    option->terminal = terminal;
+    argx_schema_touch(option->command);
+
+    return ARGX_ERROR_NONE;
+}
+
 /* ---- Reading ------------------------------------------------------------ */
 
 const argx_command_t *argx_option_command(const argx_option_t *option)
@@ -405,4 +421,11 @@ bool argx_option_initial(const argx_option_t *option)
     assert(option != NULL);
 
     return option->initial;
+}
+
+bool argx_option_is_terminal(const argx_option_t *option)
+{
+    assert(option != NULL);
+
+    return option->terminal;
 }

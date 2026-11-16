@@ -220,6 +220,7 @@ NAOS_TEST(new_result_has_no_error_and_selects_the_root)
     NAOS_CHECK_TRUE(argx_result_command_at(result, 0) == root);
     NAOS_CHECK_TRUE(argx_result_command(result) == root);
     NAOS_CHECK_UINT_EQ(argx_result_first_invalid_arg(result), 0);
+    NAOS_CHECK_TRUE(argx_result_terminal_option(result) == NULL);
 
     argx_result_destroy(result);
     destroy_root(root);
@@ -615,6 +616,37 @@ NAOS_TEST(flag_recorded_twice_is_given)
                       ARGX_SOURCE_DEFAULT);
     NAOS_CHECK_INT_EQ(argx_result_option_source(result, option_of(root, OUT)), ARGX_SOURCE_NONE);
     NAOS_CHECK_INT_EQ(argx_result_error(result), ARGX_ERROR_NONE);
+
+    argx_result_destroy(result);
+    destroy_root(root);
+}
+
+/*
+ * A terminal flag that was recorded as given is recorded as the one that
+ * ended the scan. Nothing else changes, and nothing is allocated.
+ */
+NAOS_TEST(terminal_flag_is_recorded_as_the_end_of_the_scan)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *flag = NULL;
+    argx_result_t *result;
+    size_t requests;
+
+    add_four_options(root);
+    NAOS_REQUIRE_TRUE(argx_command_add_flag(root, 'h', "help", &flag) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_terminal(flag, true) == ARGX_ERROR_NONE);
+    result = create_result(root, 0, NULL);
+    requests = argx_test_allocator_requests();
+
+    argx_result_record_flag(result, flag);
+    NAOS_CHECK_TRUE(argx_result_terminal_option(result) == NULL);
+    argx_result_record_terminal(result, flag);
+    NAOS_CHECK_TRUE(argx_result_terminal_option(result) == flag);
+
+    NAOS_CHECK_TRUE(argx_result_flag(result, flag));
+    NAOS_CHECK_INT_EQ(argx_result_error(result), ARGX_ERROR_NONE);
+    NAOS_CHECK_UINT_EQ(argx_result_count(result, option_of(root, VERBOSE)), 0);
+    NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests);
 
     argx_result_destroy(result);
     destroy_root(root);
@@ -3093,6 +3125,7 @@ NAOS_SUITE(options,
     NAOS_ADD_TEST(slots_start_as_not_given),
     NAOS_ADD_TEST(slots_of_a_pushed_command_start_as_not_given),
     NAOS_ADD_TEST(flag_recorded_twice_is_given),
+    NAOS_ADD_TEST(terminal_flag_is_recorded_as_the_end_of_the_scan),
     NAOS_ADD_TEST(count_is_the_number_of_records),
     NAOS_ADD_TEST(negatable_flag_has_the_last_recorded_state),
     NAOS_ADD_TEST(options_of_each_selected_command_are_kept_apart),
