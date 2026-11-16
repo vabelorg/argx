@@ -81,6 +81,8 @@ When a change affects behavior or the API, update the documentation in the same 
 
 Record every change that is visible to users under `Unreleased` in [CHANGELOG.md](CHANGELOG.md), in the same pull request as the change. Put the entry in the matching category: Added, Changed, Deprecated, Removed, Fixed or Security. The changelog follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
 
+Keep each entry to one or two sentences: say what users can now do, or what was fixed, and name the main function. Details such as every new function, error codes and help output belong in the documentation, not in the changelog.
+
 A breaking change, as [What counts as a breaking change](docs/references/version.md#what-counts-as-a-breaking-change) defines it, goes under Changed or Removed, starts with `**BREAKING**:`, and says what a user has to change:
 
 ```markdown
