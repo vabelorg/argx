@@ -35,20 +35,32 @@
 
 /* ---- The contents of a result ------------------------------------------- */
 
+/*
+ * One value of a list option or a positional: the value's memory, and the
+ * index of the argument that holds its text, or 0 for a default value.
+ */
+typedef struct argx_result_item
+{
+    void *value;
+    size_t index;
+} argx_result_item_t;
+
 /* The slot for one option. */
 typedef struct argx_option_slot
 {
     argx_source_t source;
-    bool on;      /* A flag: whether it was given. A negatable flag: its state. */
-    size_t count; /* A count: how many times it was given. */
-    void *value;  /* An option that takes a value: the value's memory, or NULL if none. */
+    bool on;          /* A flag: whether it was given. A negatable flag: its state. */
+    size_t count;     /* A count: how many times it was given. */
+    void *value;      /* An option with a value: the value's memory, or NULL if none. */
+    size_t index;     /* An option with a value: the argument of its value, or 0. */
+    argx_vec_t items; /* A list option: items of type argx_result_item_t. */
 } argx_option_slot_t;
 
 /* The slot for one positional. */
 typedef struct argx_positional_slot
 {
     argx_source_t source;
-    argx_vec_t values; /* Items of type void *: each value's memory. */
+    argx_vec_t values; /* Items of type argx_result_item_t. */
 } argx_positional_slot_t;
 
 /*
@@ -79,12 +91,19 @@ struct argx_result
      */
     size_t first_invalid_arg;
     argx_vec_t frames;      /* Items of type argx_result_frame_t; the first is root's frame. */
+    /*
+     * Items of type char *: the copies of the values of list options that
+     * were split at their separator, each with a '\0' in place of every
+     * separator. The items' values may point into them. Owned.
+     */
+    argx_vec_t texts;
     argx_error_t error;     /* ARGX_ERROR_NONE or ARGX_ERROR_INVALID_COMMAND_LINE */
     argx_parse_error_kind_t error_kind;
     argx_source_t error_source;
     size_t error_index;
     const char *error_argument; /* An item of args, or NULL. */
-    const char *error_value;    /* Points into args or to a schema default value, or NULL. */
+    /* Points into args, into an item of texts or to a schema default value, or NULL. */
+    const char *error_value;
     const argx_command_t *error_command;
     const argx_option_t *error_option;
     const argx_positional_t *error_positional;
@@ -238,12 +257,13 @@ typedef struct argx_result_where
 
 /*
  * Converts text with the value type of option or positional and keeps the
- * value in result, with the source where->source. text is passed to the
- * value type unchanged; it points into result's arguments or to a default
- * value in the schema.
+ * value in result, with the source where->source and the argument index
+ * where->index. text is passed to the value type unchanged, never split;
+ * it points into result's arguments or to a default value in the schema.
  *
- * A second value for an option replaces the first, which is released. A
- * value for a positional is appended after its existing values.
+ * A second value for an option with a value replaces the first, which is
+ * released. A value for a list option or a positional is appended after
+ * its existing values.
  *
  * The outcome depends on what argx_type_convert() returns:
  *
@@ -263,7 +283,7 @@ typedef struct argx_result_where
  * Preconditions, checked with assert:
  *
  * - result, option or positional, text and where are not NULL.
- * - option takes a value.
+ * - option takes a value: ARGX_OPTION_VALUE or ARGX_OPTION_LIST.
  * - option or positional belongs to a selected command of result.
  * - What argx_result_fail() requires of where, when the conversion
  *   fails.
@@ -275,10 +295,42 @@ argx_error_t argx_result_record_positional_value(argx_result_t *result,
                                                  const char *text, const argx_result_where_t *where);
 
 /*
+ * Records text, a value given on the command line for option, a list
+ * option. Without a separator, it is the same as
+ * argx_result_record_option_value(). With one, text is split at each
+ * separator into items, which are appended in order, each converted
+ * with the option's value type and kept with the argument index
+ * where->index.
+ *
+ * The items are converted in order before any is kept. An item that the
+ * value type does not take records ARGX_PARSE_ERROR_INVALID_VALUE at
+ * where, as argx_result_record_option_value() does, with that item as its
+ * value. The items are copied into result, which keeps the copy until it
+ * is destroyed: an item's value and the parse error may point into it.
+ *
+ * Returns ARGX_ERROR_NONE when every item was kept, and otherwise what
+ * argx_result_fail() returns or ARGX_ERROR_OUT_OF_MEMORY. After a parse
+ * error, none of the items of text is kept; after
+ * ARGX_ERROR_OUT_OF_MEMORY, some of them may be.
+ *
+ * Preconditions, checked with assert unless stated otherwise:
+ *
+ * - result, option, text and where are not NULL.
+ * - option is a list option, ARGX_OPTION_LIST.
+ * - option belongs to a selected command of result.
+ * - where->source is ARGX_SOURCE_COMMAND_LINE.
+ * - With a separator, text has no empty item: it is not empty, does not
+ *   start or end with the separator, and has no two separators in a row.
+ *   Not checked.
+ */
+argx_error_t argx_result_record_option_items(argx_result_t *result, const argx_option_t *option,
+                                             const char *text, const argx_result_where_t *where);
+
+/*
  * Takes back every default value that was applied: releases each value
  * of an option or positional whose source is ARGX_SOURCE_DEFAULT and
- * resets its slot to "no value", ARGX_SOURCE_NONE. Flags, counts and
- * negatable flags are left untouched.
+ * resets its slot to "no value", ARGX_SOURCE_NONE: no value and no items.
+ * Flags, counts and negatable flags are left untouched.
  *
  * Preconditions, checked with assert: result is not NULL.
  */
@@ -293,8 +345,8 @@ typedef struct argx_result_failure
     argx_parse_error_kind_t kind;
     argx_result_where_t where;
     /*
-     * Points into the result's arguments or to a schema default
-     * value, or NULL.
+     * Points into the result's arguments, into a copy the result owns or
+     * to a schema default value, or NULL.
      */
     const char *value;
     const argx_command_t *command;

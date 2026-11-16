@@ -42,6 +42,13 @@ static bool name_equals(const char *name, const char *text, size_t length)
 /* Frees an option and its strings. The value type is borrowed and stays. */
 static void free_option(argx_option_t *option)
 {
+    size_t index;
+
+    for (index = 0; index < option->defaults.count; ++index)
+    {
+        argx_free(*(char **)argx_vec_at(&option->defaults, index));
+    }
+    argx_vec_destroy(&option->defaults);
     argx_free(option->long_name);
     argx_free(option->negated_name);
     argx_free(option->description);

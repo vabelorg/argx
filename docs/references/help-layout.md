@@ -81,7 +81,7 @@ Usage: tool
 | --- | --- | --- | --- |
 | 1 | Command path | Always | `Usage: ` and the names from the root, separated by blanks |
 | 2 | `[OPTIONS]` | There is an option that is not required, of the command or among the global options of its ancestors | `[OPTIONS]` |
-| 3 | Required options | Each required option with a value of the command, in order | `--long <value name>`, or `-s <value name>` |
+| 3 | Required options | Each required option with a value or list option of the command, in order | `--long <value name>`, or `-s <value name>`; for a list option, the value as in its [heading](#headings) |
 | 4 | Positionals | Each positional, in order | By arity, below |
 | 5 | Subcommand | There are subcommands | `<COMMAND>`, or `[COMMAND]` when they are optional (`argx_command_set_subcommand_optional`) |
 
@@ -95,7 +95,10 @@ Usage: tool
 ```
 Usage: tool --output <FILE> -j <integer> <source> [target] [extra]...
 Usage: tool remote add [OPTIONS] <name>
+Usage: tool --keys <KEY>[,<KEY>...] -I <DIR> <file>
 ```
+
+- A required list option is written once, as one occurrence, with no `...` after it.
 
 - A required global option is in the usage line of its own command only, like every option of an ancestor; a descendant lists it in `Global options:` with `[required]`.
 - Items are separated by one blank. When an item would pass the width (if not 0), the blank becomes a newline and 7 blanks, aligning with the command path.
@@ -126,6 +129,10 @@ followed by:
 | Negatable flag | `--[no-]long` | `--[no-]color` |
 | Count | `...` | `-v, --verbose...` |
 | Option with a value | A blank and `<value name>`, or the type name without one | `-o, --output <FILE>`, `-j <integer>` |
+| List option without a separator | As an option with a value | `-I, --include <DIR>` |
+| List option with a separator | A blank, `<value name>`, then `[`, the separator, `<value name>` and `...]` | `-k, --keys <KEY>[,<KEY>...]`, `-n <integer>[:<integer>...]` |
+
+- A list option's heading shows one occurrence, never `...` after the value. The `[repeatable]` annotation shows that it may be given again ([Annotations](#annotations)).
 
 ```
 Options:
@@ -147,7 +154,9 @@ Annotations follow the description text of options and positionals, in this orde
 | 1 | `[choices: a, b, c]` | The value type is a choice; choices in definition order |
 | 2 | `[default: value]` | A default value is set |
 | 2 | `[default: on]` | A negatable flag is initially on |
-| 3 | `[required]` | An option with a value is required (positionals show it in their heading) |
+| 2 | `[default: a, b]` | A list option has default items; the items in the order added, separated by `, ` |
+| 3 | `[repeatable]` | The option is a list option |
+| 4 | `[required]` | An option with a value or a list option is required (positionals show it in their heading) |
 
 - Annotations are separated from the text and each other by one blank, and wrap like descriptions.
 - Without description text, they start at the description column.
@@ -161,6 +170,15 @@ Options:
   -t, --title <TEXT>   The title of the archive.
                        [default: untitled]
 ```
+
+```
+Options:
+  -k, --keys <KEY>[,<KEY>...]  Keys to extract. [repeatable] [required]
+  -I, --include <DIR>          Add a search directory. [default: /usr/include]
+                               [repeatable]
+```
+
+- Default items are written unchanged, so an item that holds `, ` cannot be told apart from two items, as for `[choices: ...]`.
 
 ## Description column
 

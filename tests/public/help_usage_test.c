@@ -322,6 +322,34 @@ NAOS_TEST(required_option_without_long_name_uses_short_name)
 }
 
 /*
+ * A required list option is written as one occurrence, as in its heading:
+ * with a separator, the value shows that it holds several items; without
+ * one, it is written as an option with a value. No "..." follows it.
+ */
+NAOS_TEST(required_list_option_is_written_as_one_occurrence)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *keys = NULL;
+    argx_option_t *include = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_list(root, 'k', "keys", argx_type_string(), &keys) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(keys, ',') == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_value_name(keys, "KEY") == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_required(keys, true) == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_command_add_list(root, 'I', NULL, argx_type_string(), &include) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_value_name(include, "DIR") == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_required(include, true) == ARGX_ERROR_NONE);
+    add_positional(root, "file", ARGX_ARITY_REQUIRED);
+    validate(root);
+
+    check_usage(root, "Usage: tool --keys <KEY>[,<KEY>...] -I <DIR> <file>\n");
+
+    destroy_root(root);
+}
+
+/*
  * The conversion function of the user-defined value type of the tests. No
  * test converts a value with it.
  */
@@ -984,6 +1012,7 @@ NAOS_SUITE(help_usage,
     NAOS_ADD_TEST(required_option_uses_long_name),
     NAOS_ADD_TEST(required_option_without_long_name_uses_short_name),
     NAOS_ADD_TEST(required_option_without_value_name_uses_type_name),
+    NAOS_ADD_TEST(required_list_option_is_written_as_one_occurrence),
     NAOS_ADD_TEST(required_options_follow_options_marker_in_definition_order),
     NAOS_ADD_TEST(positionals_show_their_arity),
     NAOS_ADD_TEST(positionals_come_in_definition_order),

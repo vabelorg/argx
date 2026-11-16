@@ -4,7 +4,7 @@
  *
  * Tests of the public option API: the option part of <argx/schema.h>.
  *
- * Options of the four kinds are added to commands, given attributes, read
+ * Options of the five kinds are added to commands, given attributes, read
  * and looked up the way a consumer does it. These are also the tests of the enumeration and
  * of the lookups of a command that has options: argx_command_option_at(),
  * argx_command_find_short() and argx_command_find_long().
@@ -81,6 +81,8 @@ static argx_error_t add_kind(argx_option_kind_t kind, argx_command_t *command, c
         return argx_command_add_count(command, short_name, long_name, out);
     case ARGX_OPTION_VALUE:
         return argx_command_add_value(command, short_name, long_name, argx_type_string(), out);
+    case ARGX_OPTION_LIST:
+        return argx_command_add_list(command, short_name, long_name, argx_type_string(), out);
     default:
         NAOS_FAIL("a test asked for an option of an unknown kind");
         /* NAOS_FAIL does not return; nothing may follow it (MSVC C4702). */
@@ -108,7 +110,8 @@ static void check_rejected(argx_command_t *command, char short_name, const char 
                            argx_error_t expected)
 {
     static const argx_option_kind_t kinds[] = { ARGX_OPTION_FLAG, ARGX_OPTION_NEGATABLE,
-                                                  ARGX_OPTION_COUNT, ARGX_OPTION_VALUE };
+                                                  ARGX_OPTION_COUNT, ARGX_OPTION_VALUE,
+                                                  ARGX_OPTION_LIST };
     const size_t count = argx_command_option_count(command);
     const size_t requests = argx_test_allocator_requests();
     size_t index;
@@ -1574,7 +1577,8 @@ static size_t fail_each_allocation_of_an_addition(argx_option_kind_t kind, size_
 NAOS_TEST(a_failed_addition_leaves_the_tree_as_it_was)
 {
     static const argx_option_kind_t kinds[] = { ARGX_OPTION_FLAG, ARGX_OPTION_NEGATABLE,
-                                                  ARGX_OPTION_COUNT, ARGX_OPTION_VALUE };
+                                                  ARGX_OPTION_COUNT, ARGX_OPTION_VALUE,
+                                                  ARGX_OPTION_LIST };
     size_t with_room_of_a_flag = 0;
     size_t index;
 
@@ -1697,6 +1701,253 @@ NAOS_TEST(a_failed_set_of_a_string_keeps_the_value_it_had)
     check_clean();
 }
 
+/* ---- List options ------------------------------------------------------- */
+
+/* Adds a list option of strings that must succeed, and returns it. */
+static argx_option_t *add_list(argx_command_t *command, char short_name, const char *long_name)
+{
+    return add(ARGX_OPTION_LIST, command, short_name, long_name);
+}
+
+/* Checks the default items of option, which must be the count strings of expected. */
+static void check_default_items(const argx_option_t *option, const char *const *expected, size_t count)
+{
+    size_t index;
+
+    NAOS_REQUIRE_TRUE(argx_option_default_count(option) == count);
+    for (index = 0; index < count; ++index)
+    {
+        NAOS_REQUIRE_TRUE(argx_option_default_at(option, index) != NULL);
+        NAOS_CHECK_STR_EQ(argx_option_default_at(option, index), expected[index]);
+    }
+}
+
+NAOS_TEST(a_list_option_is_added_and_read)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *keys = NULL;
+    argx_option_t *nums = NULL;
+
+    NAOS_CHECK_INT_EQ(argx_command_add_list(root, 'k', "keys", argx_type_string(), &keys),
+                      ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_command_add_list(root, 'n', NULL, argx_type_int(), &nums), ARGX_ERROR_NONE);
+    NAOS_CHECK_UINT_EQ(argx_command_option_count(root), 2);
+
+    check_option(keys, root, ARGX_OPTION_LIST, 'k', "keys", NULL, argx_type_string());
+    check_option(nums, root, ARGX_OPTION_LIST, 'n', NULL, NULL, argx_type_int());
+
+    /* A new list option has no attribute: no separator and no default item. */
+    check_attributes(keys, NULL, NULL, NULL, false, false, false);
+    NAOS_CHECK_INT_EQ(argx_option_separator(keys), '\0');
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(keys), 0);
+    NAOS_CHECK_FALSE(argx_option_is_global(keys));
+
+    /* It is found by its names like any option. */
+    NAOS_CHECK_TRUE(argx_command_find_short(root, 'k') == keys);
+    NAOS_CHECK_TRUE(find_long(root, "keys", NULL) == keys);
+
+    destroy_root(root);
+}
+
+NAOS_TEST(a_list_option_takes_the_attributes_of_a_value_but_not_a_default_value)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *keys = add_list(root, 'k', "keys");
+    size_t live;
+
+    NAOS_CHECK_INT_EQ(argx_option_set_description(keys, "Keys."), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_option_set_value_name(keys, "KEY"), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_option_set_required(keys, true), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_option_set_global(keys, true), ARGX_ERROR_NONE);
+    check_attributes(keys, "Keys.", "KEY", NULL, true, false, false);
+    NAOS_CHECK_TRUE(argx_option_is_global(keys));
+
+    /*
+     * A single default value, an initial state and terminal are refused,
+     * and nothing is allocated or changed.
+     */
+    live = argx_test_allocator_live();
+    NAOS_CHECK_INT_EQ(argx_option_set_default(keys, "a"), ARGX_ERROR_INVALID_DEFINITION);
+    NAOS_CHECK_INT_EQ(argx_option_set_initial(keys, true), ARGX_ERROR_INVALID_DEFINITION);
+    NAOS_CHECK_INT_EQ(argx_option_set_terminal(keys, true), ARGX_ERROR_INVALID_DEFINITION);
+    NAOS_CHECK_UINT_EQ(argx_test_allocator_live(), live);
+    check_attributes(keys, "Keys.", "KEY", NULL, true, false, false);
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(keys), 0);
+
+    destroy_root(root);
+}
+
+NAOS_TEST(default_items_are_added_in_order_and_copied)
+{
+    static const char *const expected[] = { "title", "", "a,b" };
+    argx_command_t *root = create_root();
+    argx_option_t *keys = add_list(root, 'k', "keys");
+    char buffer[] = "title";
+
+    NAOS_CHECK_INT_EQ(argx_option_add_default(keys, buffer), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_option_add_default(keys, ""), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_option_add_default(keys, "a,b"), ARGX_ERROR_NONE);
+
+    /* The caller's buffer can change: the item is a copy. */
+    buffer[0] = 'X';
+    check_default_items(keys, expected, 3);
+
+    /* The single default value of an option with a value is not used. */
+    NAOS_CHECK_TRUE(argx_option_default(keys) == NULL);
+
+    /* An item can be added with a string that was read. */
+    NAOS_CHECK_INT_EQ(argx_option_add_default(keys, argx_option_default_at(keys, 0)), ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_default_count(keys) == 4);
+    NAOS_CHECK_STR_EQ(argx_option_default_at(keys, 3), "title");
+
+    destroy_root(root);
+}
+
+NAOS_TEST(the_default_value_of_an_option_with_a_value_reads_as_one_default_item)
+{
+    static const char *const expected[] = { "a.out" };
+    argx_command_t *root = create_root();
+    argx_option_t *flag = add(ARGX_OPTION_FLAG, root, 'v', "verbose");
+    argx_option_t *count = add(ARGX_OPTION_COUNT, root, 'd', "debug");
+    argx_option_t *negatable = add(ARGX_OPTION_NEGATABLE, root, 'c', "color");
+    argx_option_t *value = add(ARGX_OPTION_VALUE, root, 'o', "output");
+
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(value), 0);
+    NAOS_REQUIRE_TRUE(argx_option_set_default(value, "a.out") == ARGX_ERROR_NONE);
+    check_default_items(value, expected, 1);
+    NAOS_CHECK_TRUE(argx_option_default_at(value, 0) == argx_option_default(value));
+
+    /* The other kinds have none. */
+    NAOS_REQUIRE_TRUE(argx_option_set_initial(negatable, true) == ARGX_ERROR_NONE);
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(flag), 0);
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(count), 0);
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(negatable), 0);
+
+    destroy_root(root);
+}
+
+/* Whether c is one of the 32 ASCII punctuation characters. */
+static bool is_ascii_punctuation(int c)
+{
+    return (c > 0x20) && (c < 0x7F) && !((c >= '0') && (c <= '9')) &&
+           !((c >= 'A') && (c <= 'Z')) && !((c >= 'a') && (c <= 'z'));
+}
+
+NAOS_TEST(a_separator_is_an_ascii_punctuation_character)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *keys = add_list(root, 'k', "keys");
+    size_t accepted = 0;
+    int c;
+
+    for (c = 1; c < 256; ++c)
+    {
+        const char separator = (char)(unsigned char)c;
+
+        /* The earlier separator stays when a character is refused. */
+        NAOS_REQUIRE_TRUE(argx_option_set_separator(keys, ':') == ARGX_ERROR_NONE);
+        if (is_ascii_punctuation(c))
+        {
+            NAOS_CHECK_INT_EQ(argx_option_set_separator(keys, separator), ARGX_ERROR_NONE);
+            NAOS_CHECK_INT_EQ(argx_option_separator(keys), separator);
+            accepted++;
+        }
+        else
+        {
+            NAOS_CHECK_INT_EQ(argx_option_set_separator(keys, separator), ARGX_ERROR_INVALID_DEFINITION);
+            NAOS_CHECK_INT_EQ(argx_option_separator(keys), ':');
+        }
+    }
+    NAOS_CHECK_UINT_EQ(accepted, 32);
+
+    /* '\0' takes the separator away. */
+    NAOS_CHECK_INT_EQ(argx_option_set_separator(keys, '\0'), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_option_separator(keys), '\0');
+
+    destroy_root(root);
+}
+
+NAOS_TEST(a_separator_and_default_items_belong_to_a_list_option_only)
+{
+    static const argx_option_kind_t kinds[] = { ARGX_OPTION_FLAG, ARGX_OPTION_NEGATABLE,
+                                                  ARGX_OPTION_COUNT, ARGX_OPTION_VALUE };
+    static const char *const long_names[] = { "aa", "bb", "cc", "dd" };
+    static const char short_names[] = { 'a', 'b', 'c', 'd' };
+    argx_command_t *root = create_root();
+    size_t index;
+
+    for (index = 0; index < (sizeof(kinds) / sizeof(kinds[0])); ++index)
+    {
+        argx_option_t *option = add(kinds[index], root, short_names[index], long_names[index]);
+        const size_t requests = argx_test_allocator_requests();
+
+        NAOS_CHECK_INT_EQ(argx_option_set_separator(option, ','), ARGX_ERROR_INVALID_DEFINITION);
+        NAOS_CHECK_INT_EQ(argx_option_set_separator(option, '\0'), ARGX_ERROR_INVALID_DEFINITION);
+        NAOS_CHECK_INT_EQ(argx_option_add_default(option, "x"), ARGX_ERROR_INVALID_DEFINITION);
+        NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests);
+        NAOS_CHECK_INT_EQ(argx_option_separator(option), '\0');
+        NAOS_CHECK_UINT_EQ(argx_option_default_count(option), 0);
+    }
+
+    destroy_root(root);
+}
+
+NAOS_TEST(a_failed_addition_of_a_default_item_keeps_the_items)
+{
+    static const char *const expected[] = { "a", "b", "c", "d" };
+    argx_command_t *root = create_root();
+    argx_option_t *keys = add_list(root, 'k', "keys");
+    size_t index;
+
+    /*
+     * The array has room for four items, so the fifth makes it grow: two
+     * allocations, the copy and then the array.
+     */
+    for (index = 0; index < 4; ++index)
+    {
+        NAOS_REQUIRE_TRUE(argx_option_add_default(keys, expected[index]) == ARGX_ERROR_NONE);
+    }
+
+    for (index = 1; index <= 2; ++index)
+    {
+        const size_t requests = argx_test_allocator_requests();
+        const size_t live = argx_test_allocator_live();
+
+        argx_test_allocator_fail_at(requests + index);
+        NAOS_CHECK_INT_EQ(argx_option_add_default(keys, "e"), ARGX_ERROR_OUT_OF_MEMORY);
+        argx_test_allocator_fail_at(0);
+
+        NAOS_CHECK_UINT_EQ(argx_test_allocator_requests(), requests + index);
+        NAOS_CHECK_UINT_EQ(argx_test_allocator_live(), live);
+        check_default_items(keys, expected, 4);
+    }
+
+    /* The same addition works afterwards. */
+    NAOS_CHECK_INT_EQ(argx_option_add_default(keys, "e"), ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_default_count(keys) == 5);
+    NAOS_CHECK_STR_EQ(argx_option_default_at(keys, 4), "e");
+
+    destroy_root(root);
+}
+
+NAOS_TEST(destroy_frees_the_default_items)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *sub = add_sub(root, "sub");
+    argx_option_t *keys = add_list(sub, 'k', "keys");
+    size_t index;
+
+    for (index = 0; index < 9; ++index)
+    {
+        NAOS_REQUIRE_TRUE(argx_option_add_default(keys, "item") == ARGX_ERROR_NONE);
+    }
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(keys, ';') == ARGX_ERROR_NONE);
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(keys), 9);
+
+    /* destroy_root() checks that nothing stays allocated. */
+    destroy_root(root);
+}
+
 NAOS_SUITE(add,
     NAOS_ADD_TEST(the_four_kinds_are_added_and_read),
     NAOS_ADD_TEST(an_option_has_a_short_name_a_long_name_or_both),
@@ -1749,11 +2000,23 @@ NAOS_SUITE(failure,
     NAOS_ADD_TEST(a_failed_set_of_a_string_keeps_the_value_it_had)
 )
 
+NAOS_SUITE(list,
+    NAOS_ADD_TEST(a_list_option_is_added_and_read),
+    NAOS_ADD_TEST(a_list_option_takes_the_attributes_of_a_value_but_not_a_default_value),
+    NAOS_ADD_TEST(default_items_are_added_in_order_and_copied),
+    NAOS_ADD_TEST(the_default_value_of_an_option_with_a_value_reads_as_one_default_item),
+    NAOS_ADD_TEST(a_separator_is_an_ascii_punctuation_character),
+    NAOS_ADD_TEST(a_separator_and_default_items_belong_to_a_list_option_only),
+    NAOS_ADD_TEST(a_failed_addition_of_a_default_item_keeps_the_items),
+    NAOS_ADD_TEST(destroy_frees_the_default_items)
+)
+
 NAOS_MAIN(
     NAOS_ADD_SUITE(add),
     NAOS_ADD_SUITE(check),
     NAOS_ADD_SUITE(lookup),
     NAOS_ADD_SUITE(attribute),
     NAOS_ADD_SUITE(destroy),
-    NAOS_ADD_SUITE(failure)
+    NAOS_ADD_SUITE(failure),
+    NAOS_ADD_SUITE(list)
 )

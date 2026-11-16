@@ -10,7 +10,8 @@ API reference of `include/argx/parse.h`. Parsing reads argv with a validated sch
 | `argx_result_error`, `argx_result_command_count`, `argx_result_command_at`, `argx_result_command` | [Reading the result](#reading-the-result) |
 | `argx_result_terminal_option` | [Terminal flags](#terminal-flags) |
 | `argx_result_flag`, `argx_result_count`, `argx_result_option_source`, `argx_result_option_string`, `argx_result_option_int`, `argx_result_option_float`, `argx_result_option_choice`, `argx_result_option_value` | [Reading the result](#reading-the-result) |
-| `argx_result_positional_count`, `argx_result_positional_source`, `argx_result_positional_string`, `argx_result_positional_int`, `argx_result_positional_float`, `argx_result_positional_choice`, `argx_result_positional_value` | [Reading the result](#reading-the-result) |
+| `argx_result_option_value_count`, `argx_result_option_string_at`, `argx_result_option_int_at`, `argx_result_option_float_at`, `argx_result_option_choice_at`, `argx_result_option_value_at`, `argx_result_option_arg_index` | [Reading the result](#reading-the-result), [List options](#list-options) |
+| `argx_result_positional_count`, `argx_result_positional_source`, `argx_result_positional_string`, `argx_result_positional_int`, `argx_result_positional_float`, `argx_result_positional_choice`, `argx_result_positional_value`, `argx_result_positional_arg_index` | [Reading the result](#reading-the-result) |
 | `argx_result_error_kind`, `argx_result_error_message` | [Kinds and messages](#kinds-and-messages) |
 | `argx_result_error_argument`, `argx_result_error_value`, `argx_result_error_source`, `argx_result_error_index`, `argx_result_error_command`, `argx_result_error_option`, `argx_result_error_positional`, `argx_result_error_short_name` | [Parse error details](#parse-error-details) |
 | `argx_result_destroy` | [Lifetime rules](#lifetime-rules) |
@@ -48,30 +49,65 @@ The **selected commands** are the root and each subcommand named on the command 
 | Flag, negatable flag | `argx_result_flag` | `false`, or the initial state |
 | Count | `argx_result_count` | 0 |
 | Source of an option | `argx_result_option_source` | `ARGX_SOURCE_NONE` |
-| Option value | `argx_result_option_string`, `_int`, `_float`, `_choice` | `false`, `*out` unchanged |
-| Option value buffer | `argx_result_option_value` | `NULL` |
+| Option value (not a list option) | `argx_result_option_string`, `_int`, `_float`, `_choice` | `false`, `*out` unchanged |
+| Option value buffer (not a list option) | `argx_result_option_value` | `NULL` |
+| Option value count | `argx_result_option_value_count` | 0 |
+| Option value at an index | `argx_result_option_string_at`, `_int_at`, `_float_at`, `_choice_at` | `false`, `*out` unchanged |
+| Option value buffer at an index | `argx_result_option_value_at` | `NULL` |
+| Position of an option value in argv | `argx_result_option_arg_index` | 0 |
 | Positional count and source | `argx_result_positional_count`, `argx_result_positional_source` | 0, `ARGX_SOURCE_NONE` |
 | Positional value | `argx_result_positional_string`, `_int`, `_float`, `_choice` | `false`, `*out` unchanged |
 | Positional value buffer | `argx_result_positional_value` | `NULL` |
+| Position of a positional value in argv | `argx_result_positional_arg_index` | 0 |
 | Parse error details | [Parse errors](#parse-errors) | `ARGX_PARSE_ERROR_NONE`, `NULL`, `ARGX_SOURCE_NONE`, 0, `'\0'` |
 
 - Options and positionals are given by their schema handles.
 - The typed functions give `const char *`, `int64_t`, `double` and `size_t` (the choice index). `_value` works for any value type, including user-defined ones, and points to the buffer holding the value.
-- Positional values are indexed from 0 in command-line order. An index past the count reads as no value.
-- Strings point into the result's copy of argv or to the schema's default, and are UTF-8 after `argx_parse_wide`.
+- Positional values, and the values of an option that takes a value, are indexed from 0 in command-line order. An index past the count reads as no value. An option with a value has 0 or 1 values, its value at index 0.
+- `_arg_index` gives the index in argv of the element that holds a value's text: for `--name value` the element after the name, for `--name=value` and `-nvalue` the option's own element. It is 0 for a default value; `argv[0]` is never a value. Compare the indexes of different options and positionals to know the order in which their values were given.
+- Strings point into the result's copy of argv, into the result's copy of a split list value, or to the schema's default, and are UTF-8 after `argx_parse_wide`.
 
 ### Rules for reading
 
 Sources are written without `ARGX_SOURCE_`.
 
-| State | Flag | Count | Negatable flag | Option with a value, positional | Source |
-| --- | --- | --- | --- | --- | --- |
-| Given | `true` | The number of times | The last one given | The value | `COMMAND_LINE` |
-| Not given, default applied (not after a parse error or a terminal flag) | — | — | — | The default | `DEFAULT` |
-| Not given, no default | `false` | 0 | The initial state | No value | `DEFAULT` for flags and counts; `NONE` otherwise |
-| Command not selected | `false` | 0 | The initial state | No value | `NONE` |
+| State | Flag | Count | Negatable flag | Option with a value, positional | List option | Source |
+| --- | --- | --- | --- | --- | --- | --- |
+| Given | `true` | The number of times | The last one given | The value | Every item given | `COMMAND_LINE` |
+| Not given, default applied (not after a parse error or a terminal flag) | — | — | — | The default | Every default item | `DEFAULT` |
+| Not given, no default | `false` | 0 | The initial state | No value | No item | `DEFAULT` for flags and counts; `NONE` otherwise |
+| Command not selected | `false` | 0 | The initial state | No value | No item | `NONE` |
 
 New values may be added to `argx_source_t`.
+
+### List options
+
+A list option (`ARGX_OPTION_LIST`, [Options](schema.md#options)) keeps every value it is given, in command-line order ([Repeated options](syntax.md#repeated-options)). Read it by index; the functions without an index require an option that is not a list, so no value is left unread.
+
+```c
+/* Prints every item of keys, a list option of strings. */
+static void print_keys(const argx_result_t *result, const argx_option_t *keys)
+{
+    const size_t count = argx_result_option_value_count(result, keys);
+    size_t index;
+
+    for (index = 0; index < count; ++index)
+    {
+        const char *key = NULL;
+
+        if (argx_result_option_string_at(result, keys, index, &key))
+        {
+            printf("%s\n", key);
+        }
+    }
+}
+```
+
+| Command line (`-k, --keys` with the separator `,`) | Items | `_arg_index` of each |
+| --- | --- | --- |
+| `tool -ka --keys b,c` | `a`, `b`, `c` | 1, 3, 3 |
+| `tool --keys=a,b x.md -kc` | `a`, `b`, `c` | 1, 1, 3 |
+| `tool` (default items `title` and `tags`) | `title`, `tags` | 0, 0 |
 
 ## Parse errors
 
@@ -95,11 +131,12 @@ Kinds are written without `ARGX_PARSE_ERROR_`.
 | `UNEXPECTED_POSITIONAL` | `unexpected argument '<value>'` | `unexpected argument 'extra'` |
 | `INVALID_ENCODING` | `invalid character encoding in argument '<value>'` | — |
 | `MISSING_SUBCOMMAND` | `missing required command` | `missing required command` |
+| `EMPTY_ITEM` | `option '<name>' has an empty item in '<value>'` | `option '--keys' has an empty item in 'a,,b'` |
 
 - A message is one English line with no prefix, newline or full stop. Names and values are inserted unchanged.
 - An option's `<name>` is as the user wrote it (`--name`, `--no-name`, or `-c` for a character of a bundle), without any `=value`. For an option not written (missing, or a default), it is `--<long name>`, or `-<short name>` without one.
 - A positional's `<name>` is its schema name; `<type>` is `argx_type_name`.
-- `<value>` is the element for an unknown subcommand or unexpected positional, the value string for a failed conversion, and for `INVALID_ENCODING` the element with U+FFFD replacements.
+- `<value>` is the element for an unknown subcommand or unexpected positional, the value string for a failed conversion (for a list option with a separator, the one item), the whole value for `EMPTY_ITEM`, and for `INVALID_ENCODING` the element with U+FFFD replacements.
 - New kinds may be added; give a `switch` a `default` label.
 - Parsing never returns `ARGX_ERROR_INVALID_VALUE`.
 
@@ -113,12 +150,13 @@ Columns are the functions without `argx_result_error_`; sources are without `ARG
 | `UNKNOWN_SUBCOMMAND` | The element | `COMMAND_LINE` | The element | `NULL` | `'\0'` |
 | `MISSING_VALUE` | The option's element | `COMMAND_LINE` | `NULL` | The option | In a bundle, the character |
 | `UNEXPECTED_VALUE` | The element | `COMMAND_LINE` | The text after `=` | The option | `'\0'` |
-| `INVALID_VALUE` (command line) | The element holding the value | `COMMAND_LINE` | The value | The option or positional | In a bundle, the character |
+| `INVALID_VALUE` (command line) | The element holding the value | `COMMAND_LINE` | The value, or the item of a list option split at its separator | The option or positional | In a bundle, the character |
 | `INVALID_VALUE` (default) | `NULL` | `DEFAULT` | The default | The option or positional | `'\0'` |
 | `MISSING_OPTION`, `MISSING_POSITIONAL` | `NULL` | `NONE` | `NULL` | The option or positional | `'\0'` |
 | `UNEXPECTED_POSITIONAL` | The element | `COMMAND_LINE` | The element | `NULL` | `'\0'` |
 | `INVALID_ENCODING` | The element, with U+FFFD | `COMMAND_LINE` | The element | `NULL` | `'\0'` |
 | `MISSING_SUBCOMMAND` | `NULL` | `NONE` | `NULL` | `NULL` | `'\0'` |
+| `EMPTY_ITEM` | The element holding the value | `COMMAND_LINE` | The whole value (`a,,b`) | The option | In a bundle, the character |
 
 - `argument` is the whole element, the whole bundle for a bundle error, or the separate value element (`--jobs many`).
 - `index` is the position of `argument` in argv, or 0 unless `source` is `COMMAND_LINE`.
@@ -219,9 +257,12 @@ When a terminal flag is read, as a long option or as a letter of a bundle:
 | `argx_result_command_at` | `index` is less than the count | — |
 | `argx_result_flag` | `option` is a flag or negatable flag | — |
 | `argx_result_count` | `option` is a count | — |
-| `argx_result_option_string`, `_int`, `_float`, `_choice` | `option` has a value type of the matching kind | — |
-| `argx_result_option_value` | `option` is an option with a value | The pointer is read with the right C type |
+| `argx_result_option_string`, `_int`, `_float`, `_choice` | `option` is an option with a value, not a list option, with a value type of the matching kind | — |
+| `argx_result_option_value` | `option` is an option with a value, not a list option | The pointer is read with the right C type |
+| `argx_result_option_value_count`, `argx_result_option_arg_index` | `option` is an option with a value or a list option | — |
+| `argx_result_option_string_at`, `_int_at`, `_float_at`, `_choice_at` | `option` is an option with a value or a list option, with a value type of the matching kind | — |
+| `argx_result_option_value_at` | `option` is an option with a value or a list option | The pointer is read with the right C type |
 | `argx_result_positional_string`, `_int`, `_float`, `_choice` | `positional` has a value type of the matching kind | — |
 | `argx_result_positional_value` | — | The pointer is read with the right C type |
 
-Reading an unselected command's items, a missing value, a positional index past the count, or error details of a successful result is not a violation; it reads as none.
+Reading an unselected command's items, a missing value, an index past the count, or error details of a successful result is not a violation; it reads as none.

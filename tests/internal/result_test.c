@@ -3096,6 +3096,110 @@ NAOS_TEST(failed_allocation_of_the_message_of_a_value_records_nothing)
     check_clean();
 }
 
+/* ---- List options ---------------------------------------------------------- */
+
+/*
+ * A list option of strings with the separator ',' is given in the
+ * arguments 1 and 2: its items are appended in order, each with the index
+ * of its argument, and are copies that stay with the result.
+ */
+NAOS_TEST(list_items_are_split_and_appended_with_their_index)
+{
+    char a0[] = "app";
+    char a1[] = "a,b";
+    char a2[] = "c";
+    char *argv[3];
+    argx_command_t *root = create_root();
+    argx_option_t *keys = NULL;
+    argx_result_t *result;
+    argx_result_where_t where = on_command_line();
+    const char *value = NULL;
+
+    argv[0] = a0;
+    argv[1] = a1;
+    argv[2] = a2;
+    NAOS_REQUIRE_TRUE(argx_command_add_list(root, 'k', "keys", argx_type_string(), &keys) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(keys, ',') == ARGX_ERROR_NONE);
+    result = create_result(root, 3, argv);
+
+    NAOS_CHECK_INT_EQ(argx_result_record_option_items(result, keys, argx_result_arg(result, 1), &where),
+                      ARGX_ERROR_NONE);
+    where.index = 2;
+    NAOS_CHECK_INT_EQ(argx_result_record_option_items(result, keys, argx_result_arg(result, 2), &where),
+                      ARGX_ERROR_NONE);
+    check_no_error(result);
+
+    NAOS_CHECK_INT_EQ(argx_result_option_source(result, keys), ARGX_SOURCE_COMMAND_LINE);
+    NAOS_REQUIRE_TRUE(argx_result_option_value_count(result, keys) == 3);
+    NAOS_REQUIRE_TRUE(argx_result_option_string_at(result, keys, 0, &value));
+    NAOS_CHECK_STR_EQ(value, "a");
+    NAOS_REQUIRE_TRUE(argx_result_option_string_at(result, keys, 1, &value));
+    NAOS_CHECK_STR_EQ(value, "b");
+    NAOS_REQUIRE_TRUE(argx_result_option_string_at(result, keys, 2, &value));
+    NAOS_CHECK_STR_EQ(value, "c");
+    NAOS_CHECK_UINT_EQ(argx_result_option_arg_index(result, keys, 0), 1);
+    NAOS_CHECK_UINT_EQ(argx_result_option_arg_index(result, keys, 1), 1);
+    NAOS_CHECK_UINT_EQ(argx_result_option_arg_index(result, keys, 2), 2);
+
+    /* The argument itself is not split: the items are a copy. */
+    NAOS_CHECK_STR_EQ(argx_result_arg(result, 1), "a,b");
+
+    argx_result_destroy(result);
+    destroy_root(root);
+}
+
+/*
+ * Each allocation of a record of split items fails in turn: the record is
+ * out of memory, records no parse error, and the result can be destroyed
+ * without a leak.
+ */
+NAOS_TEST(recording_list_items_fails_at_every_allocation_point)
+{
+    char a0[] = "app";
+    char a1[] = "1,2,3,4,5";
+    char *argv[2];
+    argx_command_t *root = create_root();
+    argx_option_t *nums = NULL;
+    argx_result_where_t where = on_command_line();
+    size_t nth;
+    bool done = false;
+
+    argv[0] = a0;
+    argv[1] = a1;
+    NAOS_REQUIRE_TRUE(argx_command_add_list(root, 'n', "num", argx_type_int(), &nums) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(nums, ',') == ARGX_ERROR_NONE);
+
+    for (nth = 1; (nth <= 64) && !done; ++nth)
+    {
+        argx_result_t *result = create_result(root, 2, argv);
+        const size_t requests = argx_test_allocator_requests();
+        argx_error_t error;
+
+        argx_test_allocator_fail_at(requests + nth);
+        error = argx_result_record_option_items(result, nums, argx_result_arg(result, 1), &where);
+        argx_test_allocator_fail_at(0);
+
+        if ((error == ARGX_ERROR_NONE) && ((argx_test_allocator_requests() - requests) < nth))
+        {
+            NAOS_CHECK_UINT_EQ(argx_result_option_value_count(result, nums), 5);
+            done = true;
+        }
+        else
+        {
+            NAOS_CHECK_INT_EQ(error, ARGX_ERROR_OUT_OF_MEMORY);
+            check_no_error(result);
+        }
+
+        argx_result_destroy(result);
+        NAOS_CHECK_UINT_EQ(argx_test_allocator_violations(), 0);
+    }
+    NAOS_CHECK_TRUE(done);
+
+    destroy_root(root);
+}
+
 NAOS_SUITE(destruction,
     NAOS_ADD_TEST(destroy_of_null_does_nothing),
     NAOS_ADD_TEST(destroy_frees_everything_and_keeps_the_schema)
@@ -3142,7 +3246,8 @@ NAOS_SUITE(values,
     NAOS_ADD_TEST(positional_values_of_every_value_type_are_read),
     NAOS_ADD_TEST(positional_values_are_kept_in_their_order),
     NAOS_ADD_TEST(positional_default_value_has_the_source_default),
-    NAOS_ADD_TEST(destroy_releases_every_value_once)
+    NAOS_ADD_TEST(destroy_releases_every_value_once),
+    NAOS_ADD_TEST(list_items_are_split_and_appended_with_their_index)
 )
 
 NAOS_SUITE(errors,
@@ -3163,7 +3268,8 @@ NAOS_SUITE(failure,
     NAOS_ADD_TEST(fails_at_every_allocation_point),
     NAOS_ADD_TEST(recording_values_fails_at_every_allocation_point),
     NAOS_ADD_TEST(failed_allocation_of_the_message_records_nothing),
-    NAOS_ADD_TEST(failed_allocation_of_the_message_of_a_value_records_nothing)
+    NAOS_ADD_TEST(failed_allocation_of_the_message_of_a_value_records_nothing),
+    NAOS_ADD_TEST(recording_list_items_fails_at_every_allocation_point)
 )
 
 NAOS_MAIN(

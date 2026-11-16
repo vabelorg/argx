@@ -116,6 +116,7 @@ NAOS_TEST(enumerations_keep_their_order)
     NAOS_CHECK_INT_EQ(ARGX_PARSE_ERROR_UNEXPECTED_POSITIONAL, 8);
     NAOS_CHECK_INT_EQ(ARGX_PARSE_ERROR_INVALID_ENCODING, 9);
     NAOS_CHECK_INT_EQ(ARGX_PARSE_ERROR_MISSING_SUBCOMMAND, 10);
+    NAOS_CHECK_INT_EQ(ARGX_PARSE_ERROR_EMPTY_ITEM, 11);
 }
 
 /* ---- The wording of each kind ----------------------------------------- */
@@ -316,6 +317,25 @@ NAOS_TEST(missing_subcommand)
     check_clean();
 }
 
+NAOS_TEST(empty_item)
+{
+    argx_message_parts_t parts = parts_of(ARGX_PARSE_ERROR_EMPTY_ITEM);
+
+    argx_test_allocator_install();
+
+    set_name(&parts, "--", "keys");
+    parts.value = "a,,b";
+    check_message(&parts, "option '--keys' has an empty item in 'a,,b'");
+
+    /* A short name, and the whole value even when it is empty. */
+    set_name(&parts, "-", "k");
+    parts.value = "";
+    check_message(&parts, "option '-k' has an empty item in ''");
+
+    argx_test_allocator_uninstall();
+    check_clean();
+}
+
 /* ---- What the wording does not depend on ------------------------------ */
 
 /*
@@ -509,7 +529,8 @@ NAOS_TEST(message_is_one_line_without_a_full_stop)
         ARGX_PARSE_ERROR_MISSING_VALUE,      ARGX_PARSE_ERROR_UNEXPECTED_VALUE,
         ARGX_PARSE_ERROR_INVALID_VALUE,      ARGX_PARSE_ERROR_MISSING_OPTION,
         ARGX_PARSE_ERROR_MISSING_POSITIONAL, ARGX_PARSE_ERROR_UNEXPECTED_POSITIONAL,
-        ARGX_PARSE_ERROR_INVALID_ENCODING,   ARGX_PARSE_ERROR_MISSING_SUBCOMMAND
+        ARGX_PARSE_ERROR_INVALID_ENCODING,   ARGX_PARSE_ERROR_MISSING_SUBCOMMAND,
+        ARGX_PARSE_ERROR_EMPTY_ITEM
     };
     size_t i;
 
@@ -627,6 +648,7 @@ NAOS_SUITE(wording,
     NAOS_ADD_TEST(unexpected_positional),
     NAOS_ADD_TEST(invalid_encoding),
     NAOS_ADD_TEST(missing_subcommand),
+    NAOS_ADD_TEST(empty_item),
     NAOS_ADD_TEST(source_and_for_positional_change_only_an_invalid_value),
     NAOS_ADD_TEST(unused_strings_are_ignored)
 )

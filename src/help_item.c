@@ -53,6 +53,25 @@ static void item_value_name(argx_out_t *out, const argx_option_t *option)
     argx_out_text(out, ">", 1);
 }
 
+/*
+ * Writes the notation of option's value: "<NAME>" (item_value_name()),
+ * followed for a list option with a separator by "[", the separator,
+ * "<NAME>" and "...]", as in "<KEY>[,<KEY>...]". option takes a value.
+ */
+static void item_value_notation(argx_out_t *out, const argx_option_t *option)
+{
+    const char separator = argx_option_separator(option);
+
+    item_value_name(out, option);
+    if (separator != '\0')
+    {
+        argx_out_text(out, "[", 1);
+        argx_out_text(out, &separator, 1);
+        item_value_name(out, option);
+        argx_out_text(out, "...]", 4);
+    }
+}
+
 void argx_help_item_option_heading(argx_out_t *out, const argx_option_t *option)
 {
     const char *long_name;
@@ -73,6 +92,7 @@ void argx_help_item_option_heading(argx_out_t *out, const argx_option_t *option)
         count = true;
         break;
     case ARGX_OPTION_VALUE:
+    case ARGX_OPTION_LIST:
         value = true;
         break;
     case ARGX_OPTION_FLAG:
@@ -120,7 +140,7 @@ void argx_help_item_option_heading(argx_out_t *out, const argx_option_t *option)
     if (value)
     {
         argx_out_text(out, " ", 1);
-        item_value_name(out, option);
+        item_value_notation(out, option);
     }
 }
 
@@ -165,7 +185,8 @@ void argx_help_item_usage_option(argx_out_t *out, const argx_option_t *option)
 
     assert(out != NULL);
     assert(option != NULL);
-    assert(argx_option_kind(option) == ARGX_OPTION_VALUE);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
 
     long_name = argx_option_long_name(option);
     if (long_name != NULL)
@@ -186,7 +207,7 @@ void argx_help_item_usage_option(argx_out_t *out, const argx_option_t *option)
      * remembered as a blank between two items.
      */
     argx_out_text(out, " ", 1);
-    item_value_name(out, option);
+    item_value_notation(out, option);
 }
 
 argx_error_t argx_help_item_text_append(argx_vec_t *text, const char *part, size_t length)
@@ -320,6 +341,44 @@ static argx_error_t item_value_notes(argx_vec_t *text, const argx_type_t *type,
     return error;
 }
 
+/*
+ * Appends the default annotation of a list option with default items,
+ * "[default: a, b]": the items in the order they were added, unchanged,
+ * separated by ", ".
+ */
+static argx_error_t item_default_items_note(argx_vec_t *text, const argx_option_t *option)
+{
+    const size_t count = argx_option_default_count(option);
+    argx_error_t error;
+    size_t index;
+
+    if (count == 0)
+    {
+        return ARGX_ERROR_NONE;
+    }
+
+    error = item_note_open(text, "[default: ");
+    for (index = 0; (index < count) && (error == ARGX_ERROR_NONE); ++index)
+    {
+        if (index != 0)
+        {
+            error = argx_help_item_text_append(text, ", ", 2);
+        }
+
+        if (error == ARGX_ERROR_NONE)
+        {
+            error = item_text_string(text, argx_option_default_at(option, index));
+        }
+    }
+
+    if (error == ARGX_ERROR_NONE)
+    {
+        error = argx_help_item_text_append(text, "]", 1);
+    }
+
+    return error;
+}
+
 argx_error_t argx_help_item_option_notes(argx_vec_t *text, const argx_option_t *option)
 {
     argx_error_t error = ARGX_ERROR_NONE;
@@ -332,6 +391,21 @@ argx_error_t argx_help_item_option_notes(argx_vec_t *text, const argx_option_t *
     {
     case ARGX_OPTION_VALUE:
         error = item_value_notes(text, argx_option_type(option), argx_option_default(option));
+        if ((error == ARGX_ERROR_NONE) && argx_option_is_required(option))
+        {
+            error = item_note_open(text, "[required]");
+        }
+        break;
+    case ARGX_OPTION_LIST:
+        error = item_choices_note(text, argx_option_type(option));
+        if (error == ARGX_ERROR_NONE)
+        {
+            error = item_default_items_note(text, option);
+        }
+        if (error == ARGX_ERROR_NONE)
+        {
+            error = item_note_open(text, "[repeatable]");
+        }
         if ((error == ARGX_ERROR_NONE) && argx_option_is_required(option))
         {
             error = item_note_open(text, "[required]");

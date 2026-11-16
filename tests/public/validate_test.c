@@ -2625,6 +2625,174 @@ NAOS_TEST(a_global_option_of_a_command_without_subcommands_is_valid)
     destroy_root(root);
 }
 
+/* ---- List options ------------------------------------------------------- */
+
+/* Adds a list option of type that must succeed, and returns it. */
+static argx_option_t *add_typed_list(argx_command_t *command, char short_name,
+                                     const char *long_name, const argx_type_t *type)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_list(command, short_name, long_name, type, &option) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(option != NULL);
+    return option;
+}
+
+static void add_default_item(argx_option_t *option, const char *value)
+{
+    NAOS_REQUIRE_TRUE(argx_option_add_default(option, value) == ARGX_ERROR_NONE);
+}
+
+NAOS_TEST(a_required_list_option_with_a_default_item_is_an_inconsistent_definition)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *keys = add_typed_list(root, 'k', "keys", argx_type_string());
+
+    NAOS_REQUIRE_TRUE(argx_option_set_required(keys, true) == ARGX_ERROR_NONE);
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    add_default_item(keys, "title");
+    check_validate(root, ARGX_ERROR_INVALID_DEFINITION, root, keys, NULL);
+    NAOS_CHECK_FALSE(argx_command_is_validated(root));
+
+    /* Without required, the same default item is valid. */
+    NAOS_REQUIRE_TRUE(argx_option_set_required(keys, false) == ARGX_ERROR_NONE);
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    destroy_root(root);
+}
+
+/*
+ * With a separator, a default item that is empty or holds the separator is
+ * an inconsistent definition, whichever is set first. Without one, the
+ * same items are valid.
+ */
+NAOS_TEST(a_default_item_that_could_not_be_given_as_one_item_is_an_inconsistent_definition)
+{
+    static const char *const faulty[] = { "", "a,b", ",", "a,", ",a" };
+    size_t index;
+
+    argx_test_allocator_install();
+
+    for (index = 0; index < (sizeof(faulty) / sizeof(faulty[0])); ++index)
+    {
+        argx_command_t *root = new_root();
+        argx_option_t *keys = add_typed_list(root, 'k', "keys", argx_type_string());
+
+        add_default_item(keys, "fine");
+        add_default_item(keys, faulty[index]);
+        check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+        NAOS_REQUIRE_TRUE(argx_option_set_separator(keys, ',') == ARGX_ERROR_NONE);
+        check_validate(root, ARGX_ERROR_INVALID_DEFINITION, root, keys, NULL);
+        NAOS_CHECK_FALSE(argx_command_is_validated(root));
+
+        /* Another separator makes the item valid again. */
+        NAOS_REQUIRE_TRUE(argx_option_set_separator(keys, ';') == ARGX_ERROR_NONE);
+        check_validate(root, (faulty[index][0] == '\0') ? ARGX_ERROR_INVALID_DEFINITION : ARGX_ERROR_NONE,
+                       (faulty[index][0] == '\0') ? root : NULL,
+                       (faulty[index][0] == '\0') ? keys : NULL, NULL);
+
+        argx_command_destroy(root);
+    }
+
+    end_test();
+}
+
+NAOS_TEST(every_default_item_is_checked_with_the_value_type_in_order)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *nums = add_typed_list(root, 'n', "num", argx_type_int());
+
+    add_default_item(nums, "1");
+    add_default_item(nums, "2");
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    add_default_item(nums, "x");
+    add_default_item(nums, "4");
+    check_validate(root, ARGX_ERROR_INVALID_DEFAULT, root, nums, NULL);
+    NAOS_CHECK_FALSE(argx_command_is_validated(root));
+    NAOS_CHECK_UINT_EQ(argx_option_default_count(nums), 4);
+
+    destroy_root(root);
+}
+
+NAOS_TEST(the_checks_of_a_list_option_are_made_in_their_order)
+{
+    probe_t probe;
+    argx_command_t *root;
+    argx_type_t *type;
+    argx_option_t *items;
+
+    argx_test_allocator_install();
+    type = new_probe_type(&probe);
+    root = new_root();
+    items = add_typed_list(root, 'i', "item", type);
+    add_default_item(items, PROBE_REJECTED);
+    add_default_item(items, "a;b");
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(items, ';') == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_set_required(items, true) == ARGX_ERROR_NONE);
+
+    /* Required comes first, then the separator, and nothing is converted. */
+    check_validate(root, ARGX_ERROR_INVALID_DEFINITION, root, items, NULL);
+    NAOS_REQUIRE_TRUE(argx_option_set_required(items, false) == ARGX_ERROR_NONE);
+    check_validate(root, ARGX_ERROR_INVALID_DEFINITION, root, items, NULL);
+    check_probe(&probe, 0, 0);
+
+    /* Then the conversions, which stop at the first rejected item. */
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(items, ',') == ARGX_ERROR_NONE);
+    check_validate(root, ARGX_ERROR_INVALID_DEFAULT, root, items, NULL);
+    check_probe(&probe, CHECK_VALIDATE_ROUNDS, 0);
+
+    argx_command_destroy(root);
+    argx_type_destroy(type);
+    end_test();
+}
+
+NAOS_TEST(a_validation_that_cannot_check_a_default_item_fails_for_a_lack_of_memory)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *nums = add_typed_list(root, 'n', "num", argx_type_int());
+
+    add_default_item(nums, "1");
+    add_default_item(nums, "2");
+
+    /* One area for each item. */
+    check_validate_without_memory(root, 1);
+    check_validate_without_memory(root, 2);
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+
+    destroy_root(root);
+}
+
+NAOS_TEST(a_change_of_a_list_option_takes_a_validated_tree_back_to_not_validated)
+{
+    argx_command_t *root = create_root();
+    argx_option_t *keys;
+
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+    NAOS_REQUIRE_TRUE(argx_command_add_list(root, 'k', "keys", argx_type_string(), &keys) ==
+                      ARGX_ERROR_NONE);
+    NAOS_CHECK_FALSE(argx_command_is_validated(root));
+
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+    add_default_item(keys, "a");
+    NAOS_CHECK_FALSE(argx_command_is_validated(root));
+
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(keys, ',') == ARGX_ERROR_NONE);
+    NAOS_CHECK_FALSE(argx_command_is_validated(root));
+
+    /* A refused change leaves it validated. */
+    check_validate(root, ARGX_ERROR_NONE, NULL, NULL, NULL);
+    NAOS_CHECK_INT_EQ(argx_option_set_separator(keys, 'x'), ARGX_ERROR_INVALID_DEFINITION);
+    NAOS_CHECK_INT_EQ(argx_option_set_default(keys, "a"), ARGX_ERROR_INVALID_DEFINITION);
+    NAOS_CHECK_TRUE(argx_command_is_validated(root));
+
+    destroy_root(root);
+}
+
 NAOS_SUITE(valid,
     NAOS_ADD_TEST(a_new_root_is_not_validated),
     NAOS_ADD_TEST(a_new_subcommand_reads_a_tree_that_is_not_validated),
@@ -2703,6 +2871,15 @@ NAOS_SUITE(global_names,
     NAOS_ADD_TEST(a_global_option_of_a_command_without_subcommands_is_valid)
 )
 
+NAOS_SUITE(list_options,
+    NAOS_ADD_TEST(a_required_list_option_with_a_default_item_is_an_inconsistent_definition),
+    NAOS_ADD_TEST(a_default_item_that_could_not_be_given_as_one_item_is_an_inconsistent_definition),
+    NAOS_ADD_TEST(every_default_item_is_checked_with_the_value_type_in_order),
+    NAOS_ADD_TEST(the_checks_of_a_list_option_are_made_in_their_order),
+    NAOS_ADD_TEST(a_validation_that_cannot_check_a_default_item_fails_for_a_lack_of_memory),
+    NAOS_ADD_TEST(a_change_of_a_list_option_takes_a_validated_tree_back_to_not_validated)
+)
+
 NAOS_MAIN(
     NAOS_ADD_SUITE(valid),
     NAOS_ADD_SUITE(positional_order),
@@ -2711,5 +2888,6 @@ NAOS_MAIN(
     NAOS_ADD_SUITE(traversal),
     NAOS_ADD_SUITE(state),
     NAOS_ADD_SUITE(defaults),
-    NAOS_ADD_SUITE(global_names)
+    NAOS_ADD_SUITE(global_names),
+    NAOS_ADD_SUITE(list_options)
 )

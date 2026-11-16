@@ -199,6 +199,7 @@ static argx_error_t new_result(const argx_command_t *root, argx_result_t **out)
     result->arg_count = 0;
     result->first_invalid_arg = 0;
     argx_vec_init(&result->frames, sizeof(argx_result_frame_t));
+    argx_vec_init(&result->texts, sizeof(char *));
     result->error = ARGX_ERROR_NONE;
     result->error_kind = ARGX_PARSE_ERROR_NONE;
     result->error_source = ARGX_SOURCE_NONE;
@@ -303,35 +304,50 @@ static void destroy_value(const argx_type_t *type, void *value)
 }
 
 /*
+ * Cleans up the value of every item of items, an array of
+ * argx_result_item_t holding values of type, and makes the array empty
+ * again, as after argx_vec_init().
+ */
+static void destroy_items(const argx_type_t *type, argx_vec_t *items)
+{
+    size_t k;
+
+    for (k = 0; k < items->count; ++k)
+    {
+        destroy_value(type, ((argx_result_item_t *)argx_vec_at(items, k))->value);
+    }
+
+    argx_vec_destroy(items);
+}
+
+/*
  * Cleans up every value held in frame's slots, once each, and frees the
  * slots.
  */
 static void destroy_frame(argx_result_frame_t *frame)
 {
     size_t i;
-    size_t k;
 
     for (i = 0; i < frame->option_count; ++i)
     {
+        const argx_type_t *type = argx_option_type(argx_command_option_at(frame->command, i));
+
         if (frame->options[i].value != NULL)
         {
-            destroy_value(argx_option_type(argx_command_option_at(frame->command, i)),
-                          frame->options[i].value);
+            destroy_value(type, frame->options[i].value);
+        }
+
+        /* Only a list option has items, and only it needs type then. */
+        if (frame->options[i].items.count > 0)
+        {
+            destroy_items(type, &frame->options[i].items);
         }
     }
 
     for (i = 0; i < frame->positional_count; ++i)
     {
-        argx_vec_t *values = &frame->positionals[i].values;
-        const argx_type_t *type =
-            argx_positional_type(argx_command_positional_at(frame->command, i));
-
-        for (k = 0; k < values->count; ++k)
-        {
-            destroy_value(type, *(void **)argx_vec_at(values, k));
-        }
-
-        argx_vec_destroy(values);
+        destroy_items(argx_positional_type(argx_command_positional_at(frame->command, i)),
+                      &frame->positionals[i].values);
     }
 
     argx_free(frame->positionals);
@@ -353,6 +369,11 @@ void argx_result_destroy(argx_result_t *result)
     }
 
     argx_vec_destroy(&result->frames);
+    for (i = 0; i < result->texts.count; ++i)
+    {
+        argx_free(*(char **)argx_vec_at(&result->texts, i));
+    }
+    argx_vec_destroy(&result->texts);
     argx_free(result->error_message);
     argx_free(result->args);
     argx_free(result);
@@ -384,6 +405,8 @@ static void init_option_slot(argx_option_slot_t *slot, const argx_option_t *opti
     slot->on = false;
     slot->count = 0;
     slot->value = NULL;
+    slot->index = 0;
+    argx_vec_init(&slot->items, sizeof(argx_result_item_t));
 
     switch (argx_option_kind(option))
     {
@@ -396,6 +419,7 @@ static void init_option_slot(argx_option_slot_t *slot, const argx_option_t *opti
         slot->on = argx_option_initial(option);
         break;
     case ARGX_OPTION_VALUE:
+    case ARGX_OPTION_LIST:
     default:
         break;
     }
@@ -445,7 +469,7 @@ static argx_error_t init_frame(argx_result_frame_t *frame, const argx_command_t 
         for (i = 0; i < frame->positional_count; ++i)
         {
             frame->positionals[i].source = ARGX_SOURCE_NONE;
-            argx_vec_init(&frame->positionals[i].values, sizeof(void *));
+            argx_vec_init(&frame->positionals[i].values, sizeof(argx_result_item_t));
         }
     }
 
@@ -842,6 +866,27 @@ static argx_error_t conversion_failure(argx_result_t *result, argx_error_t error
     return argx_result_fail(result, &failure);
 }
 
+/*
+ * Appends value, of type, at the argument index to items, an array of
+ * argx_result_item_t. On failure, value is cleaned up and
+ * ARGX_ERROR_OUT_OF_MEMORY is returned; items is unchanged.
+ */
+static argx_error_t push_item(argx_vec_t *items, const argx_type_t *type, void *value, size_t index)
+{
+    argx_result_item_t item;
+
+    item.value = value;
+    item.index = index;
+    if (argx_vec_push(items, &item) != ARGX_ERROR_NONE)
+    {
+        /* The value is not kept, so it is cleaned up here. */
+        destroy_value(type, value);
+        return ARGX_ERROR_OUT_OF_MEMORY;
+    }
+
+    return ARGX_ERROR_NONE;
+}
+
 argx_error_t argx_result_record_option_value(argx_result_t *result, const argx_option_t *option,
                                              const char *text, const argx_result_where_t *where)
 {
@@ -854,7 +899,8 @@ argx_error_t argx_result_record_option_value(argx_result_t *result, const argx_o
     assert(option != NULL);
     assert(text != NULL);
     assert(where != NULL);
-    assert(argx_option_kind(option) == ARGX_OPTION_VALUE);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
 
     slot = find_option_slot(result, option);
     assert(slot != NULL);
@@ -870,12 +916,159 @@ argx_error_t argx_result_record_option_value(argx_result_t *result, const argx_o
         return conversion_failure(result, error, text, where, option, NULL);
     }
 
-    if (slot->value != NULL)
+    if (argx_option_kind(option) == ARGX_OPTION_LIST)
     {
-        destroy_value(type, slot->value);
+        error = push_item(&slot->items, type, value, where->index);
+        if (error != ARGX_ERROR_NONE)
+        {
+            return error;
+        }
+    }
+    else
+    {
+        if (slot->value != NULL)
+        {
+            destroy_value(type, slot->value);
+        }
+
+        slot->value = value;
+        slot->index = where->index;
     }
 
-    slot->value = value;
+    slot->source = where->source;
+
+    return ARGX_ERROR_NONE;
+}
+
+/*
+ * Copies text, replaces each separator in the copy with '\0', and keeps
+ * the copy in result's texts, where it stays until result is destroyed.
+ * Writes the copy to *out. Returns ARGX_ERROR_OUT_OF_MEMORY when an
+ * allocation fails; nothing is kept then.
+ */
+static argx_error_t keep_split_copy(argx_result_t *result, const char *text, char separator,
+                                    char **out)
+{
+    const size_t length = strlen(text);
+    char *copy;
+    size_t i;
+
+    /* A text from an argument has length < SIZE_MAX, so this cannot wrap. */
+    copy = (char *)argx_malloc(length + 1);
+    if (copy == NULL)
+    {
+        return ARGX_ERROR_OUT_OF_MEMORY;
+    }
+
+    for (i = 0; i < length; ++i)
+    {
+        copy[i] = (text[i] == separator) ? '\0' : text[i];
+    }
+    copy[length] = '\0';
+
+    if (argx_vec_push(&result->texts, &copy) != ARGX_ERROR_NONE)
+    {
+        argx_free(copy);
+        return ARGX_ERROR_OUT_OF_MEMORY;
+    }
+
+    *out = copy;
+
+    return ARGX_ERROR_NONE;
+}
+
+argx_error_t argx_result_record_option_items(argx_result_t *result, const argx_option_t *option,
+                                             const char *text, const argx_result_where_t *where)
+{
+    const argx_type_t *type;
+    argx_option_slot_t *slot;
+    argx_vec_t converted;
+    argx_error_t error = ARGX_ERROR_NONE;
+    const char *item;
+    const char *end;
+    char separator;
+    char *copy;
+    size_t i;
+
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(text != NULL);
+    assert(where != NULL);
+    assert(argx_option_kind(option) == ARGX_OPTION_LIST);
+    assert(where->source == ARGX_SOURCE_COMMAND_LINE);
+
+    separator = argx_option_separator(option);
+    if (separator == '\0')
+    {
+        return argx_result_record_option_value(result, option, text, where);
+    }
+
+    slot = find_option_slot(result, option);
+    assert(slot != NULL);
+
+    error = keep_split_copy(result, text, separator, &copy);
+    if (error != ARGX_ERROR_NONE)
+    {
+        return error;
+    }
+
+    /*
+     * Every item is converted before any is kept, so a parse error leaves
+     * the slot as it was. The copy has as many '\0' as text has
+     * separators, plus its own end.
+     */
+    type = argx_option_type(option);
+    argx_vec_init(&converted, sizeof(argx_result_item_t));
+    end = copy + strlen(text);
+    for (item = copy; item < end; item += strlen(item) + 1)
+    {
+        void *value;
+
+        error = convert_value(type, item, &value);
+        if (error != ARGX_ERROR_NONE)
+        {
+            error = conversion_failure(result, error, item, where, option, NULL);
+            break;
+        }
+
+        error = push_item(&converted, type, value, where->index);
+        if (error != ARGX_ERROR_NONE)
+        {
+            break;
+        }
+    }
+
+    if (error != ARGX_ERROR_NONE)
+    {
+        destroy_items(type, &converted);
+        return error;
+    }
+
+    for (i = 0; i < converted.count; ++i)
+    {
+        const argx_result_item_t *next = (const argx_result_item_t *)argx_vec_at(&converted, i);
+
+        error = push_item(&slot->items, type, next->value, next->index);
+        if (error != ARGX_ERROR_NONE)
+        {
+            /*
+             * push_item() cleaned up the value at i; the ones after it are
+             * not kept either.
+             */
+            for (++i; i < converted.count; ++i)
+            {
+                destroy_value(type, ((argx_result_item_t *)argx_vec_at(&converted, i))->value);
+            }
+            break;
+        }
+    }
+
+    argx_vec_destroy(&converted);
+    if (error != ARGX_ERROR_NONE)
+    {
+        return error;
+    }
+
     slot->source = where->source;
 
     return ARGX_ERROR_NONE;
@@ -905,11 +1098,9 @@ argx_error_t argx_result_record_positional_value(argx_result_t *result,
         return conversion_failure(result, error, text, where, NULL, positional);
     }
 
-    error = argx_vec_push(&slot->values, &value);
+    error = push_item(&slot->values, type, value, where->index);
     if (error != ARGX_ERROR_NONE)
     {
-        /* The value is not kept, so it is cleaned up here. */
-        destroy_value(type, value);
         return error;
     }
 
@@ -925,45 +1116,47 @@ argx_error_t argx_result_record_positional_value(argx_result_t *result,
 static void discard_frame_defaults(argx_result_frame_t *frame)
 {
     size_t i;
-    size_t k;
 
     for (i = 0; i < frame->option_count; ++i)
     {
         argx_option_slot_t *slot = &frame->options[i];
+        const argx_type_t *type;
 
         /*
          * A flag, count or negatable flag that was not given also has the
-         * source of a default value, but never a value.
+         * source of a default value, but never a value or an item.
          */
-        if ((slot->source != ARGX_SOURCE_DEFAULT) || (slot->value == NULL))
+        if ((slot->source != ARGX_SOURCE_DEFAULT) ||
+            ((slot->value == NULL) && (slot->items.count == 0)))
         {
             continue;
         }
 
-        destroy_value(argx_option_type(argx_command_option_at(frame->command, i)), slot->value);
-        slot->value = NULL;
+        type = argx_option_type(argx_command_option_at(frame->command, i));
+        if (slot->value != NULL)
+        {
+            destroy_value(type, slot->value);
+            slot->value = NULL;
+        }
+
+        /* The slot is now as it was when the frame was made. */
+        destroy_items(type, &slot->items);
+        slot->index = 0;
         slot->source = ARGX_SOURCE_NONE;
     }
 
     for (i = 0; i < frame->positional_count; ++i)
     {
         argx_positional_slot_t *slot = &frame->positionals[i];
-        const argx_type_t *type;
 
         if (slot->source != ARGX_SOURCE_DEFAULT)
         {
             continue;
         }
 
-        type = argx_positional_type(argx_command_positional_at(frame->command, i));
-        for (k = 0; k < slot->values.count; ++k)
-        {
-            destroy_value(type, *(void **)argx_vec_at(&slot->values, k));
-        }
-
         /* The slot is now as it was when the frame was made. */
-        argx_vec_destroy(&slot->values);
-        argx_vec_init(&slot->values, sizeof(void *));
+        destroy_items(argx_positional_type(argx_command_positional_at(frame->command, i)),
+                      &slot->values);
         slot->source = ARGX_SOURCE_NONE;
     }
 }
@@ -1095,6 +1288,209 @@ const void *argx_result_option_value(const argx_result_t *result, const argx_opt
     return option_value(result, option);
 }
 
+/*
+ * Returns the item at index of option, an option that takes a value, in
+ * result: its value and the index of its argument. An option with a value
+ * has one item when it has a value. Returns false when there is no item
+ * at index or option's command is not a selected command of result.
+ */
+static bool option_item(const argx_result_t *result, const argx_option_t *option, size_t index,
+                        argx_result_item_t *out)
+{
+    const argx_option_slot_t *slot = find_option_slot(result, option);
+
+    if (slot == NULL)
+    {
+        return false;
+    }
+
+    if (argx_option_kind(option) == ARGX_OPTION_LIST)
+    {
+        if (index >= slot->items.count)
+        {
+            return false;
+        }
+
+        *out = *(const argx_result_item_t *)argx_vec_at(&slot->items, index);
+        return true;
+    }
+
+    if ((index != 0) || (slot->value == NULL))
+    {
+        return false;
+    }
+
+    out->value = slot->value;
+    out->index = slot->index;
+
+    return true;
+}
+
+/* Returns the area of the item at index of option, or NULL; see option_item(). */
+static const void *option_value_at(const argx_result_t *result, const argx_option_t *option,
+                                   size_t index)
+{
+    argx_result_item_t item;
+
+    if (!option_item(result, option, index, &item))
+    {
+        return NULL;
+    }
+
+    return item.value;
+}
+
+size_t argx_result_option_value_count(const argx_result_t *result, const argx_option_t *option)
+{
+    const argx_option_slot_t *slot;
+
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(root_of(argx_option_command(option)) == result->root);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
+
+    slot = find_option_slot(result, option);
+    if (slot == NULL)
+    {
+        return 0;
+    }
+
+    if (argx_option_kind(option) == ARGX_OPTION_LIST)
+    {
+        return slot->items.count;
+    }
+
+    return (slot->value != NULL) ? 1U : 0U;
+}
+
+bool argx_result_option_string_at(const argx_result_t *result, const argx_option_t *option,
+                                  size_t index, const char **out)
+{
+    const void *value;
+
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(out != NULL);
+    assert(root_of(argx_option_command(option)) == result->root);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
+    assert(argx_type_kind(argx_option_type(option)) == ARGX_TYPE_STRING);
+
+    value = option_value_at(result, option, index);
+    if (value == NULL)
+    {
+        return false;
+    }
+
+    *out = *(const char *const *)value;
+
+    return true;
+}
+
+bool argx_result_option_int_at(const argx_result_t *result, const argx_option_t *option,
+                               size_t index, int64_t *out)
+{
+    const void *value;
+
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(out != NULL);
+    assert(root_of(argx_option_command(option)) == result->root);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
+    assert(argx_type_kind(argx_option_type(option)) == ARGX_TYPE_INT);
+
+    value = option_value_at(result, option, index);
+    if (value == NULL)
+    {
+        return false;
+    }
+
+    *out = *(const int64_t *)value;
+
+    return true;
+}
+
+bool argx_result_option_float_at(const argx_result_t *result, const argx_option_t *option,
+                                 size_t index, double *out)
+{
+    const void *value;
+
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(out != NULL);
+    assert(root_of(argx_option_command(option)) == result->root);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
+    assert(argx_type_kind(argx_option_type(option)) == ARGX_TYPE_FLOAT);
+
+    value = option_value_at(result, option, index);
+    if (value == NULL)
+    {
+        return false;
+    }
+
+    *out = *(const double *)value;
+
+    return true;
+}
+
+bool argx_result_option_choice_at(const argx_result_t *result, const argx_option_t *option,
+                                  size_t index, size_t *out)
+{
+    const void *value;
+
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(out != NULL);
+    assert(root_of(argx_option_command(option)) == result->root);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
+    assert(argx_type_kind(argx_option_type(option)) == ARGX_TYPE_CHOICE);
+
+    value = option_value_at(result, option, index);
+    if (value == NULL)
+    {
+        return false;
+    }
+
+    *out = *(const size_t *)value;
+
+    return true;
+}
+
+const void *argx_result_option_value_at(const argx_result_t *result, const argx_option_t *option,
+                                        size_t index)
+{
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(root_of(argx_option_command(option)) == result->root);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
+
+    return option_value_at(result, option, index);
+}
+
+size_t argx_result_option_arg_index(const argx_result_t *result, const argx_option_t *option,
+                                    size_t index)
+{
+    argx_result_item_t item;
+
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(root_of(argx_option_command(option)) == result->root);
+    assert((argx_option_kind(option) == ARGX_OPTION_VALUE) ||
+           (argx_option_kind(option) == ARGX_OPTION_LIST));
+
+    if (!option_item(result, option, index, &item))
+    {
+        return 0;
+    }
+
+    return item.index;
+}
+
 size_t argx_result_positional_count(const argx_result_t *result, const argx_positional_t *positional)
 {
     const argx_positional_slot_t *slot;
@@ -1145,7 +1541,7 @@ static const void *positional_value(const argx_result_t *result, const argx_posi
         return NULL;
     }
 
-    return *(void *const *)argx_vec_at(&slot->values, index);
+    return ((const argx_result_item_t *)argx_vec_at(&slot->values, index))->value;
 }
 
 bool argx_result_positional_string(const argx_result_t *result, const argx_positional_t *positional,
@@ -1244,6 +1640,24 @@ const void *argx_result_positional_value(const argx_result_t *result,
     assert(root_of(argx_positional_command(positional)) == result->root);
 
     return positional_value(result, positional, index);
+}
+
+size_t argx_result_positional_arg_index(const argx_result_t *result,
+                                        const argx_positional_t *positional, size_t index)
+{
+    const argx_positional_slot_t *slot;
+
+    assert(result != NULL);
+    assert(positional != NULL);
+    assert(root_of(argx_positional_command(positional)) == result->root);
+
+    slot = find_positional_slot(result, positional);
+    if ((slot == NULL) || (index >= slot->values.count))
+    {
+        return 0;
+    }
+
+    return ((const argx_result_item_t *)argx_vec_at(&slot->values, index))->index;
 }
 
 /* ---- The outcome and the selected commands ------------------------------ */

@@ -2,7 +2,7 @@
  * Copyright (c) 2026 The ArgX Authors
  * SPDX-License-Identifier: MIT
  *
- * ArgX - options: adding the four option kinds to a command, setting
+ * ArgX - options: adding the five option kinds to a command, setting
  * option attributes, and reading options.
  */
 #include "schema_internal.h"
@@ -102,6 +102,8 @@ static argx_option_t *new_option(argx_command_t *command, argx_option_kind_t kin
     option->description = NULL;
     option->value_name = NULL;
     option->default_value = NULL;
+    argx_vec_init(&option->defaults, sizeof(char *));
+    option->separator = '\0';
     option->required = false;
     option->initial = false;
     option->terminal = false;
@@ -140,8 +142,8 @@ static void free_new_option(argx_option_t *option)
 }
 
 /*
- * Adds an option of any of the four kinds. type is the value type of an
- * option with a value, and NULL for every other kind.
+ * Adds an option of any of the five kinds. type is the value type of a
+ * kind that takes a value, and NULL for every other kind.
  */
 static argx_error_t add_option(argx_command_t *command, argx_option_kind_t kind, char short_name,
                                const char *long_name, const argx_type_t *type, argx_option_t **out)
@@ -248,11 +250,35 @@ argx_error_t argx_command_add_value(argx_command_t *command, char short_name, co
     return add_option(command, ARGX_OPTION_VALUE, short_name, long_name, type, out);
 }
 
+argx_error_t argx_command_add_list(argx_command_t *command, char short_name, const char *long_name,
+                                   const argx_type_t *type, argx_option_t **out)
+{
+    assert(type != NULL);
+
+    return add_option(command, ARGX_OPTION_LIST, short_name, long_name, type, out);
+}
+
 /* ---- Attributes --------------------------------------------------------- */
+
+/* Whether option's kind takes a value: ARGX_OPTION_VALUE or ARGX_OPTION_LIST. */
+static bool takes_value(const argx_option_t *option)
+{
+    return (option->kind == ARGX_OPTION_VALUE) || (option->kind == ARGX_OPTION_LIST);
+}
+
+/*
+ * Whether c is a valid separator: one of the 32 ASCII punctuation
+ * characters. ispunct() is not used, since it depends on the locale.
+ */
+static bool is_separator(char c)
+{
+    return ((c >= '!') && (c <= '/')) || ((c >= ':') && (c <= '@')) ||
+           ((c >= '[') && (c <= '`')) || ((c >= '{') && (c <= '~'));
+}
 
 /*
  * Sets a string attribute: *slot, a member of option, receives a copy of
- * text. only_value tells whether only an option with a value has this
+ * text. only_value tells whether only a kind that takes a value has this
  * attribute. The kind check comes before the allocation, so setting it on
  * another kind changes nothing.
  */
@@ -260,7 +286,7 @@ static argx_error_t set_string(argx_option_t *option, char **slot, const char *t
 {
     argx_error_t error;
 
-    if (only_value && (option->kind != ARGX_OPTION_VALUE))
+    if (only_value && !takes_value(option))
     {
         return ARGX_ERROR_INVALID_DEFINITION;
     }
@@ -296,7 +322,7 @@ argx_error_t argx_option_set_required(argx_option_t *option, bool required)
 {
     assert(option != NULL);
 
-    if (option->kind != ARGX_OPTION_VALUE)
+    if (!takes_value(option))
     {
         return ARGX_ERROR_INVALID_DEFINITION;
     }
@@ -312,7 +338,62 @@ argx_error_t argx_option_set_default(argx_option_t *option, const char *value)
     assert(option != NULL);
     assert(value != NULL);
 
-    return set_string(option, &option->default_value, value, true);
+    if (option->kind != ARGX_OPTION_VALUE)
+    {
+        return ARGX_ERROR_INVALID_DEFINITION;
+    }
+
+    return set_string(option, &option->default_value, value, false);
+}
+
+argx_error_t argx_option_add_default(argx_option_t *option, const char *value)
+{
+    char *copy;
+
+    assert(option != NULL);
+    assert(value != NULL);
+
+    if (option->kind != ARGX_OPTION_LIST)
+    {
+        return ARGX_ERROR_INVALID_DEFINITION;
+    }
+
+    copy = argx_strdup(value);
+    if (copy == NULL)
+    {
+        return ARGX_ERROR_OUT_OF_MEMORY;
+    }
+
+    /* A failed push leaves the items unchanged, so only the copy is freed. */
+    if (argx_vec_push(&option->defaults, &copy) != ARGX_ERROR_NONE)
+    {
+        argx_free(copy);
+        return ARGX_ERROR_OUT_OF_MEMORY;
+    }
+
+    argx_schema_touch(option->command);
+
+    return ARGX_ERROR_NONE;
+}
+
+argx_error_t argx_option_set_separator(argx_option_t *option, char separator)
+{
+    assert(option != NULL);
+
+    if (option->kind != ARGX_OPTION_LIST)
+    {
+        return ARGX_ERROR_INVALID_DEFINITION;
+    }
+
+    if ((separator != '\0') && !is_separator(separator))
+    {
+        return ARGX_ERROR_INVALID_DEFINITION;
+    }
+
+    option->separator = separator;
+    argx_schema_touch(option->command);
+
+    return ARGX_ERROR_NONE;
 }
 
 argx_error_t argx_option_set_initial(argx_option_t *option, bool on)
@@ -426,6 +507,38 @@ const char *argx_option_default(const argx_option_t *option)
     assert(option != NULL);
 
     return option->default_value;
+}
+
+size_t argx_option_default_count(const argx_option_t *option)
+{
+    assert(option != NULL);
+
+    if (option->kind == ARGX_OPTION_VALUE)
+    {
+        return (option->default_value != NULL) ? 1U : 0U;
+    }
+
+    return option->defaults.count;
+}
+
+const char *argx_option_default_at(const argx_option_t *option, size_t index)
+{
+    assert(option != NULL);
+    assert(index < argx_option_default_count(option));
+
+    if (option->kind == ARGX_OPTION_VALUE)
+    {
+        return option->default_value;
+    }
+
+    return *(const char *const *)argx_vec_at(&option->defaults, index);
+}
+
+char argx_option_separator(const argx_option_t *option)
+{
+    assert(option != NULL);
+
+    return option->separator;
 }
 
 bool argx_option_initial(const argx_option_t *option)

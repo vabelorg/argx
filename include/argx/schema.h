@@ -81,7 +81,8 @@ typedef enum argx_option_kind
     ARGX_OPTION_FLAG,      /* Whether it was given. */
     ARGX_OPTION_NEGATABLE, /* Switched with --name and --no-name. */
     ARGX_OPTION_COUNT,     /* How many times it was given. */
-    ARGX_OPTION_VALUE      /* Takes one value. */
+    ARGX_OPTION_VALUE,     /* Takes one value. */
+    ARGX_OPTION_LIST       /* Takes one value each time; collects them all. */
 } argx_option_kind_t;
 
 /*
@@ -368,9 +369,17 @@ ARGX_API const argx_command_t *argx_command_find_subcommand(const argx_command_t
  *   "no-color".
  * - argx_command_add_count(): a count, ARGX_OPTION_COUNT.
  * - argx_command_add_value(): an option that takes one value,
- *   ARGX_OPTION_VALUE. It is the only kind with a value type, type. The
- *   value type is borrowed, not copied: the caller keeps it valid until the
- *   tree's root is destroyed, and destroys it afterwards.
+ *   ARGX_OPTION_VALUE. Given more than once, the last value is kept.
+ * - argx_command_add_list(): a list option, ARGX_OPTION_LIST. It takes
+ *   one value each time it is given and keeps them all, in command-line
+ *   order. With a separator (argx_option_set_separator()), each value is
+ *   also split into several items.
+ *
+ * An option with a value and a list option are the two kinds that take a
+ * value, and the only kinds with a value type, type. Each value or item
+ * is converted with it. The value type is borrowed, not copied: the
+ * caller keeps it valid until the tree's root is destroyed, and destroys
+ * it afterwards.
  *
  * An option has a short name, a long name, or both. short_name is '\0' for
  * an option without a short name, and long_name is NULL for an option
@@ -407,8 +416,9 @@ ARGX_API const argx_command_t *argx_command_find_subcommand(const argx_command_t
  *
  * - command is not NULL. Checked with assert.
  * - short_name may be '\0' and long_name may be NULL, as described above.
- * - For argx_command_add_value(): type is not NULL (checked with assert)
- *   and is a value type that has not been destroyed.
+ * - For argx_command_add_value() and argx_command_add_list(): type is not
+ *   NULL (checked with assert) and is a value type that has not been
+ *   destroyed.
  * - out may be NULL, when the handle is not needed.
  */
 ARGX_API argx_error_t argx_command_add_flag(argx_command_t *command, char short_name,
@@ -420,6 +430,9 @@ ARGX_API argx_error_t argx_command_add_count(argx_command_t *command, char short
 ARGX_API argx_error_t argx_command_add_value(argx_command_t *command, char short_name,
                                              const char *long_name, const argx_type_t *type,
                                              argx_option_t **out);
+ARGX_API argx_error_t argx_command_add_list(argx_command_t *command, char short_name,
+                                            const char *long_name, const argx_type_t *type,
+                                            argx_option_t **out);
 
 /*
  * Returns the command that option belongs to. Never NULL.
@@ -468,9 +481,10 @@ ARGX_API const char *argx_option_long_name(const argx_option_t *option);
 ARGX_API const char *argx_option_negated_name(const argx_option_t *option);
 
 /*
- * Returns option's value type when option takes a value, and NULL for
- * every other kind. It is the value type passed to
- * argx_command_add_value(); it belongs to the caller of that function.
+ * Returns option's value type when option takes a value (ARGX_OPTION_VALUE
+ * or ARGX_OPTION_LIST), and NULL for every other kind. It is the value
+ * type passed to argx_command_add_value() or argx_command_add_list(); it
+ * belongs to the caller of that function.
  *
  * Preconditions:
  *
@@ -486,13 +500,29 @@ ARGX_API const argx_type_t *argx_option_type(const argx_option_t *option);
  * - argx_option_set_description(): the description. Every kind has one.
  * - argx_option_set_value_name(): the value name, the name the help
  *   shows for the value, such as "FILE". Only for an option that takes a
- *   value, ARGX_OPTION_VALUE.
+ *   value, ARGX_OPTION_VALUE or ARGX_OPTION_LIST.
  * - argx_option_set_required(): whether the option must be given. Only
- *   for an option that takes a value.
+ *   for an option that takes a value. A required list option must be
+ *   given at least once.
  * - argx_option_set_default(): the default value, as a string in the form
- *   the value takes on a command line. Only for an option that takes a
- *   value. The string is stored as is; whether the option's value
- *   type takes it is not checked here.
+ *   the value takes on a command line. Only for an option with a value,
+ *   ARGX_OPTION_VALUE. The string is stored as is; whether the option's
+ *   value type takes it is not checked here.
+ * - argx_option_add_default(): appends one default item, after the ones
+ *   added before. Only for a list option, ARGX_OPTION_LIST. A list option
+ *   that is not given gets all its default items, in the order they were
+ *   added; one that is given gets none of them. A default item is one
+ *   item: it is not split at the separator. Unlike the other attributes,
+ *   each call adds to the earlier ones instead of replacing them.
+ * - argx_option_set_separator(): the separator of a list option,
+ *   ARGX_OPTION_LIST. Each value given on the command line is split at
+ *   every separator into items, and each item is converted on its own:
+ *   with ',', "--keys a,b" is the items "a" and "b". '\0', the default,
+ *   means that a value is not split. Otherwise the separator is one of the
+ *   32 ASCII punctuation characters (!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~),
+ *   whatever the locale; any other character is
+ *   ARGX_ERROR_INVALID_DEFINITION. There is no escape: an item cannot
+ *   contain the separator.
  * - argx_option_set_initial(): the initial state of a negatable flag,
  *   ARGX_OPTION_NEGATABLE, which is its state when it is not given: true
  *   for on and false for off. Only for a negatable flag.
@@ -523,7 +553,10 @@ ARGX_API const argx_type_t *argx_option_type(const argx_option_t *option);
  *
  * - ARGX_ERROR_INVALID_DEFINITION: option's kind does not take the
  *   attribute, whatever the value.
- * - ARGX_ERROR_OUT_OF_MEMORY: for a string, allocating the copy failed.
+ * - ARGX_ERROR_INVALID_DEFINITION: for the separator, a character that is
+ *   neither '\0' nor ASCII punctuation.
+ * - ARGX_ERROR_OUT_OF_MEMORY: for a string or a default item, allocating
+ *   the copy failed.
  *
  * Preconditions:
  *
@@ -535,6 +568,8 @@ ARGX_API argx_error_t argx_option_set_description(argx_option_t *option, const c
 ARGX_API argx_error_t argx_option_set_value_name(argx_option_t *option, const char *name);
 ARGX_API argx_error_t argx_option_set_required(argx_option_t *option, bool required);
 ARGX_API argx_error_t argx_option_set_default(argx_option_t *option, const char *value);
+ARGX_API argx_error_t argx_option_add_default(argx_option_t *option, const char *value);
+ARGX_API argx_error_t argx_option_set_separator(argx_option_t *option, char separator);
 ARGX_API argx_error_t argx_option_set_initial(argx_option_t *option, bool on);
 ARGX_API argx_error_t argx_option_set_terminal(argx_option_t *option, bool terminal);
 ARGX_API argx_error_t argx_option_set_global(argx_option_t *option, bool global);
@@ -570,13 +605,44 @@ ARGX_API bool argx_option_is_required(const argx_option_t *option);
 
 /*
  * Returns option's default value (the string that was set), or NULL when
- * none has been set. It is always NULL for an option that takes no value.
+ * none has been set. It is always NULL for an option that is not an
+ * option with a value, ARGX_OPTION_VALUE; a list option's default items
+ * are read with argx_option_default_count() and argx_option_default_at().
  *
  * Preconditions:
  *
  * - option is not NULL. Checked with assert.
  */
 ARGX_API const char *argx_option_default(const argx_option_t *option);
+
+/*
+ * Read option's default items. argx_option_default_count() returns how
+ * many there are: for a list option, the number of default items added;
+ * for an option with a value, 1 when it has a default value and 0
+ * otherwise; and 0 for every other kind. argx_option_default_at() returns
+ * the one at index, counted from 0 in the order they were added. For an
+ * option with a value, the item at index 0 is its default value.
+ *
+ * The strings belong to the tree.
+ *
+ * Preconditions:
+ *
+ * - option is not NULL. Checked with assert.
+ * - For argx_option_default_at(), index is less than
+ *   argx_option_default_count(option). Checked with assert.
+ */
+ARGX_API size_t argx_option_default_count(const argx_option_t *option);
+ARGX_API const char *argx_option_default_at(const argx_option_t *option, size_t index);
+
+/*
+ * Returns option's separator, or '\0' when it has none. It is always '\0'
+ * for an option that is not a list option.
+ *
+ * Preconditions:
+ *
+ * - option is not NULL. Checked with assert.
+ */
+ARGX_API char argx_option_separator(const argx_option_t *option);
 
 /*
  * Returns option's initial state: true for on, false for off. It is off
@@ -773,9 +839,13 @@ ARGX_API const char *argx_positional_default(const argx_positional_t *positional
  *      ancestors (ARGX_ERROR_NAME_CONFLICT). The global option is not the
  *      faulty one: the option of the descendant is. Options that are not
  *      global, and the options of siblings, may still reuse names.
- *    - it is required and has a default value
- *      (ARGX_ERROR_INVALID_DEFINITION), or
- *    - its value type does not take its default value
+ *    - it is required and has a default value or a default item
+ *      (ARGX_ERROR_INVALID_DEFINITION),
+ *    - it is a list option with a separator and a default item that is
+ *      empty or contains the separator (ARGX_ERROR_INVALID_DEFINITION),
+ *      or
+ *    - its value type does not take its default value or one of its
+ *      default items, checked in the order they were added
  *      (ARGX_ERROR_INVALID_DEFAULT).
  * 3. The positionals' default values, in the order the positionals were
  *    added. A positional is faulty when its value type does not take its

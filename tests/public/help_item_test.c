@@ -1107,6 +1107,97 @@ NAOS_TEST(generation_out_of_memory_frees_the_cell_text)
     destroy_root(root);
 }
 
+/* ---- List options ---------------------------------------------------------- */
+
+/*
+ * Adds a list option with the separator separator ('\0' for none), the
+ * value name value_name (NULL for none) and the description description
+ * (NULL for none).
+ */
+static argx_option_t *add_list_option(argx_command_t *command, char short_name, const char *long_name,
+                                      const argx_type_t *type, char separator, const char *value_name,
+                                      const char *description)
+{
+    argx_option_t *option = NULL;
+
+    NAOS_REQUIRE_TRUE(argx_command_add_list(command, short_name, long_name, type, &option) ==
+                      ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(option != NULL);
+    NAOS_REQUIRE_TRUE(argx_option_set_separator(option, separator) == ARGX_ERROR_NONE);
+    if (value_name != NULL)
+    {
+        NAOS_REQUIRE_TRUE(argx_option_set_value_name(option, value_name) == ARGX_ERROR_NONE);
+    }
+    if (description != NULL)
+    {
+        describe_option(option, description);
+    }
+    return option;
+}
+
+/*
+ * A list option is written as one occurrence; with a separator, the value
+ * shows that it can hold several items. Every list option says that it is
+ * repeatable.
+ */
+NAOS_TEST(list_heading_shows_one_occurrence_and_the_separator)
+{
+    argx_command_t *root = create_root();
+
+    add_list_option(root, 'k', "keys", argx_type_string(), ',', "KEY", "Keys to extract.");
+    add_list_option(root, 'I', "include", argx_type_string(), '\0', "DIR", "Add a directory.");
+    add_list_option(root, 'n', NULL, argx_type_int(), ':', NULL, "Numbers.");
+    add_list_option(root, '\0', "tag", argx_type_string(), '\0', NULL, NULL);
+    validate(root);
+
+    check_help(root,
+               "Usage: tool [OPTIONS]\n"
+               "\n"
+               "Options:\n"
+               "  -k, --keys <KEY>[,<KEY>...]  Keys to extract. [repeatable]\n"
+               "  -I, --include <DIR>          Add a directory. [repeatable]\n"
+               "  -n <integer>[:<integer>...]  Numbers. [repeatable]\n"
+               "      --tag <string>           [repeatable]\n");
+
+    destroy_root(root);
+}
+
+/*
+ * The annotations of a list option: the choices, the default items in the
+ * order they were added, "[repeatable]", then "[required]".
+ */
+NAOS_TEST(list_annotations_stand_in_their_order)
+{
+    static const char *const modes[] = { "fast", "small" };
+    argx_command_t *root = create_root();
+    argx_type_t *type = create_choice(modes, 2);
+    argx_option_t *mode;
+    argx_option_t *dirs;
+    argx_option_t *keys;
+
+    mode = add_list_option(root, 'm', "mode", type, ',', "MODE", "What to prefer.");
+    NAOS_REQUIRE_TRUE(argx_option_add_default(mode, "fast") == ARGX_ERROR_NONE);
+    dirs = add_list_option(root, 'I', "include", argx_type_string(), '\0', "DIR", "Directories.");
+    NAOS_REQUIRE_TRUE(argx_option_add_default(dirs, "/usr/include") == ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_option_add_default(dirs, "a, b") == ARGX_ERROR_NONE);
+    keys = add_list_option(root, 'k', "keys", argx_type_string(), ',', "KEY", "Keys.");
+    set_option_required(keys);
+    validate(root);
+
+    check_help(root,
+               "Usage: tool [OPTIONS] --keys <KEY>[,<KEY>...]\n"
+               "\n"
+               "Options:\n"
+               "  -m, --mode <MODE>[,<MODE>...]\n"
+               "                                What to prefer. [choices: fast, small] [default:\n"
+               "                                fast] [repeatable]\n"
+               "  -I, --include <DIR>           Directories. [default: /usr/include, a, b]\n"
+               "                                [repeatable]\n"
+               "  -k, --keys <KEY>[,<KEY>...]   Keys. [repeatable] [required]\n");
+
+    destroy_root_and_type(root, type);
+}
+
 NAOS_SUITE(help_item,
     NAOS_ADD_TEST(flag_heading_has_three_forms_of_names),
     NAOS_ADD_TEST(long_name_alone_keeps_its_four_blanks),
@@ -1131,7 +1222,9 @@ NAOS_SUITE(help_item,
     NAOS_ADD_TEST(annotations_after_final_newline_start_on_the_next_line),
     NAOS_ADD_TEST(long_annotations_are_wrapped_at_the_description_column),
     NAOS_ADD_TEST(generation_leaves_nothing_allocated),
-    NAOS_ADD_TEST(generation_out_of_memory_frees_the_cell_text)
+    NAOS_ADD_TEST(generation_out_of_memory_frees_the_cell_text),
+    NAOS_ADD_TEST(list_heading_shows_one_occurrence_and_the_separator),
+    NAOS_ADD_TEST(list_annotations_stand_in_their_order)
 )
 
 NAOS_MAIN(

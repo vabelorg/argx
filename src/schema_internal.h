@@ -64,15 +64,20 @@ struct argx_command
  * - long_name: the long name, or NULL when the option has none.
  * - negated_name: "no-" followed by the long name, for the
  *   ARGX_OPTION_NEGATABLE kind. NULL for every other kind.
- * - type: the value type, for the ARGX_OPTION_VALUE kind. NULL for every
- *   other kind. Borrowed.
+ * - type: the value type, for the ARGX_OPTION_VALUE and ARGX_OPTION_LIST
+ *   kinds. NULL for every other kind. Borrowed.
  * - description: the description, or NULL when none has been set.
  * - value_name: the value name, or NULL when none has been set. Only the
- *   ARGX_OPTION_VALUE kind has one.
+ *   kinds that take a value have one.
  * - default_value: the default value, or NULL when none has been set. Only
  *   the ARGX_OPTION_VALUE kind has one.
- * - required: whether the option is required. Only the ARGX_OPTION_VALUE
- *   kind can be.
+ * - defaults: the default items, as char *, in the order they were added.
+ *   Each is a copy owned by the option. Only the ARGX_OPTION_LIST kind has
+ *   any.
+ * - separator: the separator, or '\0' for none. Only the ARGX_OPTION_LIST
+ *   kind has one.
+ * - required: whether the option is required. Only the kinds that take a
+ *   value can be.
  * - initial: the initial state, for the ARGX_OPTION_NEGATABLE kind. False
  *   for every other kind.
  * - terminal: whether reading the option ends the parse. Only the
@@ -91,6 +96,8 @@ struct argx_option
     char *description;
     char *value_name;
     char *default_value;
+    argx_vec_t defaults;
+    char separator;
     bool required;
     bool initial;
     bool terminal;

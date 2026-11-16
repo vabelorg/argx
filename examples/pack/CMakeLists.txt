@@ -11,6 +11,10 @@ argx_add_example_test(pack create
 argx_add_example_test(pack values
     "^verbose: 0, color: off\r?\ncreate out\\.zip, level 9 \\(command line\\)\r?\nformat zip, block size 2097152 bytes, ratio 0\\.50\r?\n  -x\\.txt\r?\n$"
     ARGS --no-color create -l9 --format=zip --block-size 2m -o out.zip -- -x.txt)
+# A list option, given twice; the first value is split at ','.
+argx_add_example_test(pack exclude
+    "^verbose: 0, color: on\r?\ncreate out\\.tar, level 6 \\(default\\)\r?\nformat tar, block size 65536 bytes, ratio 0\\.50\r?\nexclude \\*\\.o, \\*\\.tmp, build\r?\n  a\\.txt\r?\n$"
+    ARGS create -o out.tar -x *.o,*.tmp --exclude build a.txt)
 argx_add_example_test(pack list
     "^verbose: 0, color: on\r?\nlist out\\.tar, pattern \\* \\(default\\)\r?\n$"
     ARGS list out.tar)

@@ -167,7 +167,8 @@ static argx_error_t check_required(argx_result_t *result, const argx_command_t *
     {
         const argx_option_t *option = argx_command_option_at(command, index);
 
-        if ((argx_option_kind(option) == ARGX_OPTION_VALUE) && argx_option_is_required(option) &&
+        /* Only an option that takes a value can be required. */
+        if (argx_option_is_required(option) &&
             (argx_result_option_source(result, option) == ARGX_SOURCE_NONE))
         {
             return fail_missing(result, command, option, NULL);
@@ -191,9 +192,11 @@ static argx_error_t check_required(argx_result_t *result, const argx_command_t *
 
 /*
  * The second pass over command: each option that takes a value, and each
- * positional, that has no value but has a default value gets that default
- * value, with the source ARGX_SOURCE_DEFAULT. Returns ARGX_ERROR_NONE, or
- * what recording the first failing default value returned.
+ * positional, that has no value but has default values gets them, with
+ * the source ARGX_SOURCE_DEFAULT: an option with a value or a positional
+ * its default value, a list option each of its default items in order.
+ * Returns ARGX_ERROR_NONE, or what recording the first failing default
+ * value returned.
  */
 static argx_error_t apply_defaults(argx_result_t *result, const argx_command_t *command)
 {
@@ -206,17 +209,15 @@ static argx_error_t apply_defaults(argx_result_t *result, const argx_command_t *
     for (index = 0; index < option_count; index++)
     {
         const argx_option_t *option = argx_command_option_at(command, index);
-        const char *value;
-        argx_error_t error;
+        const size_t default_count = argx_option_default_count(option);
+        size_t item;
 
-        if ((argx_option_kind(option) != ARGX_OPTION_VALUE) ||
+        /*
+         * Only an option that takes a value has default values, and its
+         * source is ARGX_SOURCE_NONE until it has a value.
+         */
+        if ((default_count == 0) ||
             (argx_result_option_source(result, option) != ARGX_SOURCE_NONE))
-        {
-            continue;
-        }
-
-        value = argx_option_default(option);
-        if (value == NULL)
         {
             continue;
         }
@@ -224,10 +225,15 @@ static argx_error_t apply_defaults(argx_result_t *result, const argx_command_t *
         name_option(&name, option);
         locate(&where, ARGX_SOURCE_DEFAULT, &name);
 
-        error = argx_result_record_option_value(result, option, value, &where);
-        if (error != ARGX_ERROR_NONE)
+        for (item = 0; item < default_count; item++)
         {
-            return error;
+            const argx_error_t error = argx_result_record_option_value(
+                result, option, argx_option_default_at(option, item), &where);
+
+            if (error != ARGX_ERROR_NONE)
+            {
+                return error;
+            }
         }
     }
 
