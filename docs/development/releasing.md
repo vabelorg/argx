@@ -38,7 +38,25 @@ The workflows use only `GITHUB_TOKEN`. The release workflows set `permissions: {
 
 ## Keeping the changelog
 
-[CHANGELOG.md](../../CHANGELOG.md) follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Every pull request with a user-visible change adds an entry under `Unreleased` in the matching category.
+[CHANGELOG.md](../../CHANGELOG.md) follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Every pull request with a user-visible change adds an entry under `Unreleased` in the matching category: Added, Changed, Deprecated, Removed, Fixed or Security. An entry is a line that starts with `- ` or `* ` and is under one of these headings.
+
+A breaking change, as [What counts as a breaking change](../references/version.md#what-counts-as-a-breaking-change) defines it, goes under Changed or Removed, starts with `**BREAKING**:`, and says what a user has to change:
+
+```markdown
+- **BREAKING**: `argx_foo()` is renamed `argx_bar()`. Rename the calls.
+```
+
+Write the marker exactly so, in capitals with the colon after the asterisks. Keep a Changelog has no section for breaking changes, so the marker shows them within their category; [vabelorg/naos](https://github.com/vabelorg/naos) marks them the same way.
+
+The entries decide which versions the next release may have. They are compared with the earlier release: the highest release tag, or version listed in the changelog, that is not a pre-release.
+
+| Entries under `Unreleased` | Major version 0 | Major version 1 or later |
+| --- | --- | --- |
+| Fixed and Security only | Patch or higher | Patch or higher |
+| Added, Changed, Deprecated or Removed | Minor or higher | Minor or higher |
+| A `**BREAKING**` entry | Minor or higher | Major |
+
+A pre-release is checked as the version it leads to: `0.2.0-rc.1` as `0.2.0`. The first release, with no release before it, is not checked against the entries.
 
 Before a release, review the `Unreleased` entries with an ordinary pull request if needed. There must be at least one entry. Do not write the version section, its date or the links at the end by hand.
 
@@ -50,8 +68,8 @@ Before a release, review the `Unreleased` entries with an ordinary pull request 
    gh workflow run release-pr.yml --ref main -f version=0.2.0
    ```
 
-   If the branch, the version or the changelog is wrong, it stops without creating anything and gives the reason in the run summary.
-2. Review the pull request. You may fix the changelog section, or its date if you merge on a later day, on the release branch. Change no other files, and keep the version equal to the branch name.
+   If the branch, the version or the changelog is wrong, it stops without creating anything and gives the reason in the run summary. It refuses a version that the entries under `Unreleased` do not allow ([Keeping the changelog](#keeping-the-changelog)), such as `0.1.1` with an `Added` entry, and names the entry and the lowest version allowed.
+2. Review the pull request. When the release has `**BREAKING**` entries, the pull request says so: read them again. You may fix the changelog section, or its date if you merge on a later day, on the release branch. Change no other files, and keep the version equal to the branch name.
 3. Merge it once `CI result` has passed.
 4. Check the tag and the Release on the Releases page.
 
@@ -64,7 +82,8 @@ gh workflow run release-pr.yml --ref main -f version=0.2.0-rc.1
 ```
 
 - The version must be higher than every release tag, so pre-release the next version (`0.2.0-rc.1`), not the one already released.
-- Each pre-release, and the final release after it, moves only the current `Unreleased` entries and needs at least one. If nothing changed since the last pre-release, add an entry such as `- First stable release of 0.2.0, with no change since 0.2.0-rc.2.` The release notes already refer to the pre-releases.
+- The entries are checked against the version the pre-release leads to, so `0.1.1-rc.1` may have Fixed and Security entries only.
+- Each pre-release, and the final release after it, moves only the current `Unreleased` entries and needs at least one. If nothing changed since the last pre-release, add an entry such as `- First stable release of 0.2.0, with no change since 0.2.0-rc.2.`, under Changed for a minor or major release, or under Fixed for a patch release. The release notes already refer to the pre-releases.
 
 ## Recovering from failures
 

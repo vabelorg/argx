@@ -28,6 +28,8 @@ ArgX follows [Semantic Versioning 2.0.0](https://semver.org/): `0.2.0`, `0.2.0-r
 
 ### What counts as a breaking change
 
+The changelog marks each breaking change with `**BREAKING**:`, and a release refuses a version that its entries do not allow ([Keeping the changelog](../development/releasing.md#keeping-the-changelog)).
+
 - Removing a public function, type or macro declared under `include/argx/`, or changing its meaning.
 - A program that compiled against the previous version no longer compiles, or compiles with a different meaning.
 - A program linked against the previous shared library no longer works without a rebuild: a changed signature, a changed size or layout of a public type, or changed values of public constants.
