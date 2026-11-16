@@ -31,7 +31,7 @@ Options:
 ```
 
 - A **list** is `Commands:`, `Arguments:`, `Options:` or `Global options:`; an **item** is one entry in it. An item's **description** is its description text plus its annotations.
-- A **column** is a byte offset from the start of the line, from 0. All widths are in bytes.
+- A **column** is an offset from the start of the line, from 0. Widths are measured by the [measure function](help.md#measure-function) of the help options; without one, one byte is one column. Blanks always count one column each.
 - Lines end with `\n` only, including the last one, and never with a blank unless a name does.
 - Fixed phrases are English. Schema strings are written unchanged; descriptions and annotations are wrapped.
 
@@ -229,7 +229,8 @@ Options:
 
 ## Limits
 
-- **Widths are counted in bytes,** so non-ASCII text wraps early and widens the description column. Tabs and control characters count one column per byte.
+- **Without a measure function, widths are counted in bytes,** so non-ASCII text wraps early and widens the description column; set one that counts display columns ([How-to](../guides/how-to.md#measuring-the-display-width-of-the-help)). Tabs and control characters count as the measure function says, one column per byte by default.
+- **Lines break only at blanks and newlines.** Text in a script written without blanks, such as Chinese or Japanese, is one word and is never broken; break its lines yourself with `\n` ([How-to](../guides/how-to.md#writing-help-text-in-chinese-or-japanese)).
 - **A newline in a name breaks the columns.** Names and value names are written as they are, newlines included, but still measured as one line. Do not put newlines in names.
 - **Blanks in names and `\r` anywhere are written unchanged,** so a root named `"tool "` gives `Usage: tool `.
-- The help cannot be translated, colored, reordered, hidden or grouped, and a subcommand's help never shows the options of its ancestors other than their global options.
+- The fixed phrases cannot be translated; the help cannot be colored, reordered, hidden or grouped, and a subcommand's help never shows the options of its ancestors other than their global options.

@@ -84,12 +84,58 @@ extern "C"
 typedef bool (*argx_help_write_fn_t)(void *user_data, const char *text, size_t length);
 
 /*
+ * The measure function: a function that the caller provides to tell the
+ * library how many columns a text takes on the display. Set it with
+ * argx_help_options_set_measure(). Without one, one byte is one column,
+ * so text with non-ASCII characters wraps early and widens the
+ * description column, but no line goes beyond the width.
+ *
+ * Each call follows this contract:
+ *
+ * - user_data is the pointer that the caller passed along with the
+ *   measure function. The library passes it on unchanged and never reads
+ *   what it points to; it may be NULL.
+ * - text points to length bytes, which the help writes unchanged. They
+ *   are not terminated: there is no '\0' after them, so read exactly
+ *   length bytes. They may be invalid UTF-8.
+ * - length is at least 1, and text holds no '\n': the library ends lines
+ *   itself.
+ * - The library cuts text only before or after an ASCII byte: at the
+ *   blanks and newlines of the schema's strings, and around the text that
+ *   it adds itself, such as "Usage: ", "<", ">", ", " and "[default: ".
+ *   So a UTF-8 sequence is never cut, nor a sequence of characters that
+ *   holds no ASCII byte. text may hold ASCII blanks, such as those of
+ *   "Usage: " or ", ".
+ * - The blanks that the library adds for the indent, for padding and
+ *   between the words of a wrapped text are counted as one column each
+ *   and are not passed.
+ * - The same text may be measured more than once in one generation.
+ * - Return the number of columns that text takes. The library adds up
+ *   the results, and a sum stops at the greatest size_t value instead of
+ *   wrapping around.
+ *
+ * The measure function must:
+ *
+ * - return the same value for the same text. Otherwise the layout is not
+ *   guaranteed, though the behaviour stays defined.
+ * - be safe to call from several threads at the same time, when help
+ *   options that are not being changed are used by several threads.
+ * - not fail. It decides how many columns to give to what it cannot
+ *   measure, such as invalid UTF-8 or a character that wcwidth() reports
+ *   as -1.
+ * - not change or destroy the schema that the text is generated from, or
+ *   the help options.
+ */
+typedef size_t (*argx_help_measure_fn_t)(void *user_data, const char *text, size_t length);
+
+/*
  * The help options: the layout settings of a help text. The contents are
  * not public, so later versions can add settings, each with its own
  * setter function, and programs built against earlier versions keep
  * working.
  *
- * All settings are counted in columns, where one byte is one column:
+ * All settings are counted in columns, as the measure function counts
+ * them (one byte is one column by default):
  *
  * - the width: the column that no line goes beyond, as long as the line
  *   can be broken before it. The default is 80. 0 means no limit.
@@ -99,6 +145,8 @@ typedef bool (*argx_help_write_fn_t)(void *user_data, const char *text, size_t l
  *   start. The default is 32. Half the width (when the width is not 0)
  *   and the indent + 2 also bound it: see
  *   argx_help_options_set_max_column().
+ * - the measure function: how many columns a text takes. The default is
+ *   none: one byte is one column. See argx_help_options_set_measure().
  *
  * No setting is greater than 65535: a greater value is clamped to 65535.
  */
@@ -106,7 +154,8 @@ typedef struct argx_help_options argx_help_options_t;
 
 /*
  * Creates help options and writes them to *out. Every setting has its
- * default value: width 80, indent 2, maximum column 32.
+ * default value: width 80, indent 2, maximum column 32, no measure
+ * function.
  *
  * The caller owns the help options and destroys them with
  * argx_help_options_destroy().
@@ -188,6 +237,36 @@ ARGX_API void argx_help_options_set_indent(argx_help_options_t *options, size_t 
 ARGX_API void argx_help_options_set_max_column(argx_help_options_t *options, size_t column);
 
 /*
+ * Sets the measure function, which measures the display width of text in
+ * columns, and the pointer passed to it (see argx_help_measure_fn_t).
+ * NULL restores the default: one byte is one column, with user_data
+ * ignored.
+ *
+ * Every width in the help is then measured with it: the usage line items,
+ * the headings, and so the description column, the words of
+ * descriptions and annotations when they are wrapped. The width, the
+ * indent and the maximum column are counted in the columns it returns.
+ *
+ * The library keeps no data about characters. For text in UTF-8, the
+ * function can count each character with wcwidth() (POSIX) or a library
+ * such as utf8proc.
+ *
+ * The library borrows user_data and never frees it: it must stay valid
+ * while the help options are used with this function.
+ *
+ * The function allocates no memory and cannot fail.
+ *
+ * Preconditions:
+ *
+ * - options is not NULL. Checked with assert.
+ * - No other thread is using the help options during the call. Not
+ *   checked. Help options that are not being changed may be used by
+ *   several threads at the same time.
+ */
+ARGX_API void argx_help_options_set_measure(argx_help_options_t *options,
+                                            argx_help_measure_fn_t measure_fn, void *user_data);
+
+/*
  * Generates command's usage line, such as
  *
  *     Usage: tool remote add [OPTIONS] --output <FILE> <input> [extra]...
@@ -220,13 +299,14 @@ ARGX_API void argx_help_options_set_max_column(argx_help_options_t *options, siz
  * lines, and the library adds no blank at the end of a line. An item is
  * never split, not even at a blank inside it: an item wider than the
  * width is written as is, on a line of its own, and the first item always
- * starts the text. An item's width is its number of bytes. With width 0,
+ * starts the text. An item's width is measured by the measure function
+ * in the help options (its number of bytes by default). With width 0,
  * all items are on one line.
  *
  * This holds for names without a newline. A newline inside a positional
  * name, a value name, a user-defined value type's name or the root's name
  * is written as is, so the item itself spans more than one line. The item
- * still counts as one item with all its bytes, while the output column
+ * still counts as one item with all its width, while the output column
  * starts again after the newline. The usage line can therefore break
  * before such an item even though the part before its newline would fit.
  * When the root's name starts with a newline, the blank of "Usage: " ends
@@ -366,7 +446,8 @@ ARGX_API argx_error_t argx_help_write_usage(const argx_command_t *command,
  * or the column limit when that is less. The limit is the smaller of the
  * maximum column from the help options and, when the width is not 0, half
  * the width, rounded down; but it is never less than the indent + 2. A
- * heading's width is its number of bytes.
+ * heading's width is measured by the measure function in the help options
+ * (its number of bytes by default).
  *
  * The description starts on the heading's line when at least 2 blanks
  * stand between the heading and the description column. After a heading
@@ -385,13 +466,16 @@ ARGX_API argx_error_t argx_help_write_usage(const argx_command_t *command,
  * in the help options; a word that is too long is not split. A newline in
  * a description ends the line, and the text after it starts at the column
  * where the description started. With width 0, lines end only at those
- * newlines. The annotations are broken as part of the description,
+ * newlines. A line that fits the width is never broken, so a text in a
+ * script written without blanks, such as Chinese or Japanese, can be
+ * broken where its author chooses, with newlines; with a measure function
+ * that counts the display width, those lines then stay as they are. The annotations are broken as part of the description,
  * including at blanks inside an annotation.
  *
  * All of this assumes names without a newline. A newline inside a
  * positional name, a value name, a user-defined value type's name or the
  * root's name is written as is, while a heading still counts with all its
- * bytes: what is said here about columns and empty lines then need not
+ * width: what is said here about columns and empty lines then need not
  * hold. Keep newlines out of names.
  *
  * The fixed words of the text are English. Schema strings are not

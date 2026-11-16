@@ -29,13 +29,15 @@
 #define ARGX_HELP_SETTING_MAX ((size_t)65535)
 
 /*
- * The help options. Every field is at most ARGX_HELP_SETTING_MAX.
+ * The help options. Every size_t field is at most ARGX_HELP_SETTING_MAX.
  */
 struct argx_help_options
 {
-    size_t width;      /* The width in columns; 0 means no limit. */
-    size_t indent;     /* The blanks before each item of a list. */
-    size_t max_column; /* The last column at which descriptions may start. */
+    size_t width;                      /* The width in columns; 0 means no limit. */
+    size_t indent;                     /* The blanks before each item of a list. */
+    size_t max_column;                 /* The last column at which descriptions may start. */
+    argx_help_measure_fn_t measure_fn; /* NULL: one byte is one column. */
+    void *measure_data;                /* Passed to measure_fn; borrowed. */
 };
 
 #endif /* ARGX_HELP_INTERNAL_H */

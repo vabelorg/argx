@@ -9,6 +9,9 @@
  * function of the tests appends what it is given to an array of a fixed
  * size and records how it was called: the number of calls, whether a call
  * had the length 0, and whether the user data arrived as it was given.
+ * The measure function of the tests counts a byte that starts a UTF-8
+ * sequence as 2 columns, so that the results do not depend on Unicode
+ * data.
  */
 #include "out.h"
 
@@ -632,6 +635,246 @@ NAOS_TEST(counting_only_matches_writing)
     check_sink(&sink, "  -v, --verbose     Say more\n");
 }
 
+/* ---- The measure function -------------------------------------------------- */
+
+/*
+ * What the measure function of the tests has received, and what it
+ * returns. It counts an ASCII byte as 1 column and a byte that starts a
+ * UTF-8 sequence as 2, so "日本" (6 bytes) is 4 columns. With fixed set,
+ * it returns fixed instead, whatever the text.
+ */
+typedef struct gauge
+{
+    size_t calls;        /* the number of calls */
+    size_t bad_calls;    /* the calls with no text, the length 0 or a '\n' */
+    size_t blank_calls;  /* the calls with text that is only blanks */
+    bool fixed_set;      /* return fixed */
+    size_t fixed;        /* the width returned when fixed_set */
+} gauge_t;
+
+static void gauge_init(gauge_t *gauge)
+{
+    memset(gauge, 0, sizeof *gauge);
+}
+
+static size_t gauge_measure(void *user_data, const char *text, size_t length)
+{
+    gauge_t *gauge = user_data;
+    size_t width = 0;
+    size_t blanks = 0;
+    size_t i;
+
+    ++gauge->calls;
+    if ((text == NULL) || (length == 0) || (memchr(text, '\n', length) != NULL))
+    {
+        ++gauge->bad_calls;
+        return 0;
+    }
+    for (i = 0; i < length; ++i)
+    {
+        unsigned char byte = (unsigned char)text[i];
+
+        if (byte == ' ')
+        {
+            ++blanks;
+        }
+        if (byte < 0x80)
+        {
+            width += 1;
+        }
+        else if (byte >= 0xC0)
+        {
+            width += 2;
+        }
+    }
+    if (blanks == length)
+    {
+        ++gauge->blank_calls;
+    }
+
+    return gauge->fixed_set ? gauge->fixed : width;
+}
+
+/* The text advances the column and the total by its measured width. */
+NAOS_TEST(measure_counts_the_text)
+{
+    sink_t sink;
+    gauge_t gauge;
+    argx_out_t out;
+
+    sink_init(&sink);
+    gauge_init(&gauge);
+    argx_out_init(&out, sink_write, &sink);
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+
+    argx_out_string(&out, "\xE6\x97\xA5\xE6\x9C\xAC"); /* 日本 */
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 4);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), 4);
+    argx_out_string(&out, "-x");
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 6);
+    NAOS_CHECK_UINT_EQ(gauge.calls, 2);
+    NAOS_CHECK_UINT_EQ(gauge.bad_calls, 0);
+    check_sink(&sink, "\xE6\x97\xA5\xE6\x9C\xAC-x");
+}
+
+/*
+ * Blanks and newlines are counted by the output, never measured; empty
+ * text is not measured either.
+ */
+NAOS_TEST(measure_never_sees_blanks_or_newlines)
+{
+    gauge_t gauge;
+    argx_out_t out;
+
+    gauge_init(&gauge);
+    argx_out_init(&out, NULL, NULL);
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+
+    argx_out_spaces(&out, 3);
+    argx_out_pad_to(&out, 10);
+    argx_out_text(&out, "", 0);
+    NAOS_CHECK_UINT_EQ(argx_out_measure(&out, "", 0), 0);
+    argx_out_newline(&out);
+    NAOS_CHECK_UINT_EQ(gauge.calls, 0);
+
+    argx_out_string(&out, "a");
+    argx_out_newline(&out);
+    NAOS_CHECK_UINT_EQ(gauge.calls, 1);
+    NAOS_CHECK_UINT_EQ(gauge.bad_calls, 0);
+    NAOS_CHECK_UINT_EQ(gauge.blank_calls, 0);
+}
+
+/* argx_out_measure() measures without writing or moving the column. */
+NAOS_TEST(measure_alone_writes_nothing)
+{
+    sink_t sink;
+    gauge_t gauge;
+    argx_out_t out;
+
+    sink_init(&sink);
+    gauge_init(&gauge);
+    argx_out_init(&out, sink_write, &sink);
+    NAOS_CHECK_UINT_EQ(argx_out_measure(&out, "\xC3\xA9t\xC3\xA9", 5), 5); /* été */
+
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+    NAOS_CHECK_UINT_EQ(argx_out_measure(&out, "\xC3\xA9t\xC3\xA9", 5), 5);
+    NAOS_CHECK_UINT_EQ(argx_out_measure(&out, "\xE6\x97\xA5", 3), 2);
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 0);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), 0);
+    NAOS_CHECK_UINT_EQ(sink.calls, 0);
+}
+
+/* argx_out_text_measured() takes the width given and measures nothing. */
+NAOS_TEST(text_measured_takes_the_width_given)
+{
+    sink_t sink;
+    gauge_t gauge;
+    argx_out_t out;
+
+    sink_init(&sink);
+    gauge_init(&gauge);
+    argx_out_init(&out, sink_write, &sink);
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+
+    argx_out_text_measured(&out, "word", 4, 9);
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 9);
+    NAOS_CHECK_UINT_EQ(gauge.calls, 0);
+    argx_out_text_measured(&out, "", 0, 5);
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 9);
+    check_sink(&sink, "word");
+}
+
+/* NULL restores one byte per column. */
+NAOS_TEST(measure_null_restores_bytes)
+{
+    gauge_t gauge;
+    argx_out_t out;
+
+    gauge_init(&gauge);
+    argx_out_init(&out, NULL, NULL);
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+    argx_out_set_measure(&out, NULL, NULL);
+
+    argx_out_string(&out, "\xE6\x97\xA5\xE6\x9C\xAC");
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 6);
+    NAOS_CHECK_UINT_EQ(gauge.calls, 0);
+}
+
+/* argx_out_init() forgets the measure function. */
+NAOS_TEST(init_forgets_the_measure)
+{
+    gauge_t gauge;
+    argx_out_t out;
+
+    gauge_init(&gauge);
+    argx_out_init(&out, NULL, NULL);
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+    argx_out_init(&out, NULL, NULL);
+
+    argx_out_string(&out, "\xE6\x97\xA5");
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 3);
+    NAOS_CHECK_UINT_EQ(gauge.calls, 0);
+}
+
+/* ---- The total ------------------------------------------------------------- */
+
+/*
+ * The total counts text, blanks and newlines since argx_out_init(), and
+ * does not restart at a newline. Dropped blanks stay counted.
+ */
+NAOS_TEST(total_counts_across_lines)
+{
+    gauge_t gauge;
+    argx_out_t out;
+
+    gauge_init(&gauge);
+    argx_out_init(&out, NULL, NULL);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), 0);
+
+    argx_out_string(&out, "ab");
+    argx_out_spaces(&out, 2);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), 4);
+    argx_out_newline(&out);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), 5);
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 0);
+
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+    argx_out_string(&out, "\xE6\x97\xA5");
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), 7);
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 2);
+
+    argx_out_init(&out, NULL, NULL);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), 0);
+}
+
+/*
+ * A measure function that returns huge widths cannot make the column or
+ * the total wrap around: they stop at the greatest size_t value.
+ */
+NAOS_TEST(huge_widths_saturate)
+{
+    gauge_t gauge;
+    argx_out_t out;
+
+    gauge_init(&gauge);
+    gauge.fixed_set = true;
+    gauge.fixed = (size_t)-1 - 1;
+    argx_out_init(&out, NULL, NULL);
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+
+    argx_out_string(&out, "a");
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), (size_t)-1 - 1);
+    argx_out_string(&out, "b");
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), (size_t)-1);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), (size_t)-1);
+    argx_out_spaces(&out, 5);
+    argx_out_pad_to(&out, 10);
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), (size_t)-1);
+    argx_out_newline(&out);
+    NAOS_CHECK_UINT_EQ(argx_out_column(&out), 0);
+    NAOS_CHECK_UINT_EQ(argx_out_total(&out), (size_t)-1);
+}
+
 /* ---- The registration ------------------------------------------------------ */
 
 NAOS_SUITE(column,
@@ -671,10 +914,26 @@ NAOS_SUITE(counting_only,
     NAOS_ADD_TEST(counting_only_matches_writing)
 )
 
+NAOS_SUITE(measure,
+    NAOS_ADD_TEST(measure_counts_the_text),
+    NAOS_ADD_TEST(measure_never_sees_blanks_or_newlines),
+    NAOS_ADD_TEST(measure_alone_writes_nothing),
+    NAOS_ADD_TEST(text_measured_takes_the_width_given),
+    NAOS_ADD_TEST(measure_null_restores_bytes),
+    NAOS_ADD_TEST(init_forgets_the_measure)
+)
+
+NAOS_SUITE(total,
+    NAOS_ADD_TEST(total_counts_across_lines),
+    NAOS_ADD_TEST(huge_widths_saturate)
+)
+
 NAOS_MAIN(
     NAOS_ADD_SUITE(column),
     NAOS_ADD_SUITE(blanks),
     NAOS_ADD_SUITE(padding),
     NAOS_ADD_SUITE(write_function),
-    NAOS_ADD_SUITE(counting_only)
+    NAOS_ADD_SUITE(counting_only),
+    NAOS_ADD_SUITE(measure),
+    NAOS_ADD_SUITE(total)
 )

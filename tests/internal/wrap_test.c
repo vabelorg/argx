@@ -391,6 +391,111 @@ NAOS_TEST(counting_only_output)
     NAOS_CHECK_FALSE(argx_out_failed(&out));
 }
 
+/* ---- The measure function -------------------------------------------------- */
+
+/*
+ * The measure function of the tests: an ASCII byte is 1 column and a byte
+ * that starts a UTF-8 sequence is 2, so a kana (3 bytes) is 2 columns. It
+ * counts its calls and the calls with a blank, a newline or nothing.
+ */
+typedef struct gauge
+{
+    size_t calls;     /* the number of calls */
+    size_t bad_calls; /* the calls with no text, the length 0, a blank or a '\n' */
+} gauge_t;
+
+static size_t gauge_measure(void *user_data, const char *text, size_t length)
+{
+    gauge_t *gauge = user_data;
+    size_t width = 0;
+    size_t i;
+
+    ++gauge->calls;
+    if ((text == NULL) || (length == 0) || (memchr(text, '\n', length) != NULL) ||
+        (memchr(text, ' ', length) != NULL))
+    {
+        ++gauge->bad_calls;
+        return 0;
+    }
+    for (i = 0; i < length; ++i)
+    {
+        unsigned char byte = (unsigned char)text[i];
+
+        if (byte < 0x80)
+        {
+            width += 1;
+        }
+        else if (byte >= 0xC0)
+        {
+            width += 2;
+        }
+    }
+
+    return width;
+}
+
+/*
+ * Like check_wrap(), with the measure function of the tests. Checks that
+ * each word was measured exactly once, and that no blank or newline was
+ * passed to it.
+ */
+static void check_wrap_measured(const char *text, size_t column, size_t width, size_t words,
+                                const char *expected)
+{
+    sink_t sink;
+    gauge_t gauge;
+    argx_out_t out;
+
+    sink_init(&sink);
+    memset(&gauge, 0, sizeof gauge);
+    argx_out_init(&out, sink_write, &sink);
+    argx_out_set_measure(&out, gauge_measure, &gauge);
+
+    argx_wrap_write(&out, text, strlen(text), column, width);
+
+    check_sink(&sink, expected);
+    NAOS_CHECK_UINT_EQ(gauge.calls, words);
+    NAOS_CHECK_UINT_EQ(gauge.bad_calls, 0);
+}
+
+/* "あい", "うえ" and "お": 6, 6 and 3 bytes, 4, 4 and 2 columns. */
+#define KANA_TEXT "\xE3\x81\x82\xE3\x81\x84 \xE3\x81\x86\xE3\x81\x88 \xE3\x81\x8A"
+
+/* Words fit by their measured width, not by their bytes. */
+NAOS_TEST(words_fit_by_their_measured_width)
+{
+    check_wrap(KANA_TEXT, 0, 9,
+               "\xE3\x81\x82\xE3\x81\x84\n\xE3\x81\x86\xE3\x81\x88\n\xE3\x81\x8A");
+    check_wrap_measured(KANA_TEXT, 0, 9, 3,
+                        "\xE3\x81\x82\xE3\x81\x84 \xE3\x81\x86\xE3\x81\x88\n\xE3\x81\x8A");
+    check_wrap_measured(KANA_TEXT, 0, 12, 3, KANA_TEXT);
+    check_wrap_measured(KANA_TEXT, 0, 11, 3,
+                        "\xE3\x81\x82\xE3\x81\x84 \xE3\x81\x86\xE3\x81\x88\n\xE3\x81\x8A");
+}
+
+/* The column and the indent of continuation lines count in columns too. */
+NAOS_TEST(measured_lines_start_at_the_column)
+{
+    check_wrap_measured(KANA_TEXT, 3, 12, 3,
+                        "   \xE3\x81\x82\xE3\x81\x84 \xE3\x81\x86\xE3\x81\x88\n   \xE3\x81\x8A");
+    check_wrap_measured("a\n" KANA_TEXT, 2, 0, 4,
+                        "  a\n  " KANA_TEXT);
+}
+
+/*
+ * A line that the author ended with a newline and that fits is not
+ * broken: the text without blanks stays one line.
+ */
+NAOS_TEST(measured_line_without_blanks_that_fits)
+{
+    /* "日本語の説明" (18 bytes, 12 columns) and "続き" on the next line. */
+    check_wrap_measured("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE\xE8\xAA\xAC\xE6\x98\x8E"
+                        "\n\xE7\xB6\x9A\xE3\x81\x8D",
+                        4, 16, 2,
+                        "    \xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE\xE8\xAA\xAC\xE6\x98\x8E"
+                        "\n    \xE7\xB6\x9A\xE3\x81\x8D");
+}
+
 /* ---- The registration ------------------------------------------------------ */
 
 NAOS_SUITE(width,
@@ -430,10 +535,17 @@ NAOS_SUITE(bytes,
     NAOS_ADD_TEST(counting_only_output)
 )
 
+NAOS_SUITE(measure,
+    NAOS_ADD_TEST(words_fit_by_their_measured_width),
+    NAOS_ADD_TEST(measured_lines_start_at_the_column),
+    NAOS_ADD_TEST(measured_line_without_blanks_that_fits)
+)
+
 NAOS_MAIN(
     NAOS_ADD_SUITE(width),
     NAOS_ADD_SUITE(blanks),
     NAOS_ADD_SUITE(newlines),
     NAOS_ADD_SUITE(start_column),
-    NAOS_ADD_SUITE(bytes)
+    NAOS_ADD_SUITE(bytes),
+    NAOS_ADD_SUITE(measure)
 )

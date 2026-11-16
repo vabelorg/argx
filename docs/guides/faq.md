@@ -46,7 +46,11 @@ No. The fixed phrases are English only, and the parts cannot be colored, reorder
 
 ### Why does a description with non-ASCII characters wrap too early?
 
-Widths are counted in bytes, not display columns ([Limits](../references/help-layout.md#limits)).
+Without a measure function, widths are counted in bytes, not display columns. Set a measure function on the help options ([How-to](how-to.md#measuring-the-display-width-of-the-help)).
+
+### Why is a description in Chinese or Japanese never broken?
+
+Lines break only at blanks, and such text has none. Break its lines with `\n` ([How-to](how-to.md#writing-help-text-in-chinese-or-japanese)).
 
 ## Debugging
 
