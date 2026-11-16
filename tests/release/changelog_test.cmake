@@ -3,8 +3,9 @@
 #
 # Tests of tools/release/ArgXChangelog.cmake: parsing a changelog and
 # rejecting every form it does not accept, moving the body of [Unreleased] to
-# the section of a new version with the link definitions updated, and taking
-# the notes of a version out of its section.
+# the section of a new version with the link definitions updated, taking the
+# notes of a version out of its section, and checking the entries under
+# [Unreleased] against the version to release.
 #
 # Run by CTest as release.changelog; see ReleaseTestHelpers.cmake.
 
@@ -277,6 +278,125 @@ expect_notes("${second_expected}" "0.2.0-rc.1"
 to_crlf("${notes_020}" notes_020_crlf)
 expect_notes("${history_crlf}" "0.2.0" "${notes_020_crlf}")
 
+# --- Checking the version against the entries --------------------------------
+
+# Sets <out-var> to a changelog with <body> under [Unreleased] and a released
+# 0.1.0. The body starts on line 5.
+function(entries_text body out_var)
+    set(${out_var} "# Changelog\n\n## [Unreleased]\n\n${body}\n## [0.1.0] - 2026-11-13\n\n\
+### Added\n\n- The first release.\n\n[Unreleased]: ${repo}/compare/v0.1.0...HEAD\n\
+[0.1.0]: ${repo}/releases/tag/v0.1.0\n" PARENT_SCOPE)
+endfunction()
+
+# Checks <body> for <version> after <base>, and that the result is <valid>
+# with <kind>, <breaking> breaking entries and an error that holds <part>
+# ("" for no error).
+function(expect_check what body version base valid kind breaking part)
+    entries_text("${body}" text)
+    foreach(field IN ITEMS VALID ERROR KIND BREAKING)
+        set(k_${field} "stale")
+    endforeach()
+    argx_changelog_check_version("${text}" "${version}" "${base}" k)
+    argx_test_expect_equal("${k_VALID}" "${valid}" "${what}: valid")
+    argx_test_expect_equal("${k_KIND}" "${kind}" "${what}: the kind")
+    argx_test_expect_equal("${k_BREAKING}" "${breaking}" "${what}: the breaking entries")
+    if(part STREQUAL "")
+        argx_test_expect_equal("${k_ERROR}" "" "${what}: no error")
+    else()
+        argx_test_expect_contains("${k_ERROR}" "${part}" "${what}: the reason")
+    endif()
+endfunction()
+
+set(fixed "### Fixed\n\n- A fix.\n")
+set(added "### Added\n\n- A function.\n")
+set(breaking "### Changed\n\n- **BREAKING**: `argx_foo()` is renamed `argx_bar()`.\n")
+
+# The kind of release, a pre-release checked as the version it leads to.
+expect_check("first" "${added}" 0.1.0 "" TRUE first 0 "")
+expect_check("patch" "${fixed}" 0.1.1 0.1.0 TRUE patch 0 "")
+expect_check("minor" "${added}" 0.2.0 0.1.0 TRUE minor 0 "")
+expect_check("major" "${breaking}" 1.0.0 0.9.3 TRUE major 1 "")
+expect_check("a pre-release of a patch" "${fixed}" 0.1.1-rc.1 0.1.0 TRUE patch 0 "")
+expect_check("a pre-release of a minor" "${added}" 0.2.0-rc.1 0.1.0 TRUE minor 0 "")
+
+# Entries that a patch release may have, in either list form, with nested
+# items and continuation lines, which are not entries.
+expect_check("a patch with Fixed and Security"
+    "### Fixed\n\n* A fix\n  over two lines.\n  - A nested item.\n\n### Security\n\n- A fix.\n"
+    0.1.1 0.1.0 TRUE patch 0 "")
+# A nested item that looks like a marker is not an entry.
+expect_check("a nested **BREAKING** item"
+    "### Fixed\n\n- A fix.\n  - **BREAKING**: not an entry.\n" 0.1.1 0.1.0 TRUE patch 0 "")
+# "Breaking" without emphasis or a colon is a word of the entry.
+expect_check("an entry that starts with Breaking"
+    "### Fixed\n\n- Breaking up long lines no longer drops a character.\n"
+    0.1.1 0.1.0 TRUE patch 0 "")
+
+# What a patch release may not have.
+foreach(category IN ITEMS Added Changed Deprecated Removed)
+    expect_check("a patch with ${category}" "${fixed}\n### ${category}\n\n- A change.\n"
+        0.1.1 0.1.0 FALSE patch 0
+        "the version 0.1.1 is a patch release after 0.1.0, but line 11 is an entry under \
+${category}, which needs at least a minor release; a patch release may have Fixed and Security \
+entries only. Release 0.2.0 or higher.")
+endforeach()
+expect_check("a patch with a breaking change" "${breaking}" 0.1.1 0.1.0 FALSE patch 1
+    "line 7 is a **BREAKING** entry, which needs at least a minor release. Release 0.2.0 or higher.")
+expect_check("a pre-release of a patch with Added" "${added}" 1.2.1-rc.1 1.2.0 FALSE patch 0
+    "the version 1.2.1-rc.1 is a patch release after 1.2.0")
+
+# A breaking change needs a minor release before 1.0, and a major one after.
+expect_check("a breaking change before 1.0" "${breaking}" 0.2.0 0.1.0 TRUE minor 1 "")
+expect_check("a breaking change in a minor after 1.0" "${breaking}" 1.3.0 1.2.0 FALSE minor 1
+    "the version 1.3.0 is a minor release after 1.2.0, but line 7 is a **BREAKING** entry, \
+which needs a major release from 1.0 on. Release 2.0.0 or higher.")
+expect_check("a breaking change in a major after 1.0" "${breaking}" 2.0.0 1.2.0 TRUE major 1 "")
+expect_check("an addition in a minor after 1.0" "${added}" 1.3.0 1.2.0 TRUE minor 0 "")
+# The entry named is the first one that needs the highest kind of release.
+expect_check("the entry that needs the most"
+    "### Added\n\n- A function.\n\n### Removed\n\n- A macro.\n- **BREAKING**: `argx_foo()` is \
+removed.\n- **BREAKING**: `argx_bar()` is removed.\n" 1.3.0 1.2.0 FALSE minor 2
+    "line 12 is a **BREAKING** entry")
+
+# The form of the entries, checked for the first release too.
+expect_check("an entry under no category" "- A change.\n\n${fixed}" 0.2.0 0.1.0 FALSE minor 0
+    "line 5: the entry is under no category heading.")
+expect_check("an entry under no category, first release" "- A change.\n" 0.1.0 "" FALSE first 0
+    "line 5: the entry is under no category heading.")
+foreach(marker IN ITEMS "**Breaking**:" "**BREAKING:**" "**BREAKING** " "BREAKING:"
+        "breaking:" "__BREAKING__:" "*BREAKING*:")
+    expect_check("the marker [${marker}]" "### Changed\n\n- ${marker} A change.\n"
+        0.2.0 0.1.0 FALSE minor 0
+        "line 7: the entry starts with a marker close to \"**BREAKING**: \".")
+endforeach()
+foreach(category IN ITEMS Added Deprecated Fixed Security)
+    expect_check("a breaking change under ${category}"
+        "### ${category}\n\n- **BREAKING**: A change.\n" 1.0.0 0.9.0 FALSE major 1
+        "line 7: the **BREAKING** entry is under ${category}. A breaking change goes under \
+Changed or Removed.")
+endforeach()
+expect_check("a breaking change under Removed" "### Removed\n\n- **BREAKING**: A macro.\n"
+    0.2.0 0.1.0 TRUE minor 1 "")
+expect_check("an empty category before another" "### Added\n\n${fixed}" 0.1.1 0.1.0 FALSE patch 0
+    "line 5: the category heading has no entry under it.")
+expect_check("an empty category at the end" "${fixed}\n### Security\n" 0.1.1 0.1.0 FALSE patch 0
+    "line 9: the category heading has no entry under it.")
+# A category without entries in a released section is not checked.
+expect_parse_valid("${no_entries_text}" "no entries, again" "0.1.0" 0)
+argx_changelog_check_version("${history_text}" 1.1.0 1.0.0 k)
+argx_test_expect_equal("${k_VALID}" "TRUE" "the history: valid for 1.1.0")
+
+# The same with CRLF line endings, and without a final line ending.
+entries_text("${breaking}" text)
+to_crlf("${text}" text)
+argx_changelog_check_version("${text}" 1.3.0 1.2.0 k)
+argx_test_expect_contains("${k_ERROR}" "line 7 is a **BREAKING** entry" "CRLF: the reason")
+argx_test_expect_not_contains("${k_ERROR}" "\r" "CRLF: no carriage return")
+set(text "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A fix.\n\n### Added\n\n[Unreleased]: x")
+argx_changelog_check_version("${text}" 0.1.1 0.1.0 k)
+argx_test_expect_contains("${k_ERROR}" "line 9: the category heading has no entry"
+    "an empty category at the end of the text")
+
 # --- Failures of promote and notes -------------------------------------------
 #
 # Each case runs the function in a child process, since a FATAL_ERROR would
@@ -288,6 +408,9 @@ include(\"${ARGX_SOURCE_ROOT}/tools/release/ArgXChangelog.cmake\")
 file(READ \"\${TEXT_FILE}\" text)
 if(ACTION STREQUAL \"promote\")
     argx_changelog_promote(\"\${text}\" \"\${VERSION}\" \"\${DATE}\" \"\${REPO}\" result)
+elseif(ACTION STREQUAL \"check\")
+    argx_changelog_check_version(\"\${text}\" \"\${VERSION}\" \"\${BASE}\" k)
+    set(result \"\${k_VALID}\")
 else()
     argx_changelog_notes(\"\${text}\" \"\${VERSION}\" \"\${REPO}\" result)
 endif()
@@ -345,6 +468,18 @@ expect_rejected("notes of an invalid changelog" "${invalid_text}"
 expect_rejected("notes without a repository URL" "${history_text}"
     "the repository URL is empty" -D ACTION=notes -D VERSION=0.2.0)
 
+set(check -D ACTION=check)
+expect_rejected("check an invalid changelog" "${invalid_text}"
+    "the changelog is not valid: line 5:" ${check} -D VERSION=0.2.0 -D BASE=0.1.0)
+expect_rejected("check an invalid version" "${first_text}"
+    "\"0.2\" is not a valid version" ${check} -D VERSION=0.2 -D BASE=0.1.0)
+expect_rejected("check against an invalid base" "${first_text}"
+    "the earlier release: \"v0.1.0\" is not a valid version" ${check} -D VERSION=0.2.0
+    -D BASE=v0.1.0)
+expect_rejected("check against a pre-release" "${first_text}"
+    "the earlier release 0.2.0-rc.1 is a pre-release" ${check} -D VERSION=0.2.0
+    -D BASE=0.2.0-rc.1)
+
 # The driver itself works, so the failures above come from the cases.
 set(text_file "${ARGX_TEST_WORK_DIR}/driver-check.md")
 file(WRITE "${text_file}" "${first_text}")
@@ -355,5 +490,10 @@ file(WRITE "${text_file}" "${history_text}")
 argx_test_run_script(run "${driver}" -D "TEXT_FILE=${text_file}" ${notes} -D VERSION=0.2.0)
 argx_test_expect_equal("${run_RESULT}" "0" "notes in a child: the exit code")
 argx_test_expect_contains("${run_OUTPUT}" "done: [### Fixed" "notes in a child: the result")
+file(WRITE "${text_file}" "${first_text}")
+argx_test_run_script(run "${driver}" -D "TEXT_FILE=${text_file}" ${check} -D VERSION=0.2.0
+    -D BASE=0.1.0)
+argx_test_expect_equal("${run_RESULT}" "0" "check in a child: the exit code")
+argx_test_expect_contains("${run_OUTPUT}" "done: [TRUE]" "check in a child: the result")
 
 argx_test_finish()
