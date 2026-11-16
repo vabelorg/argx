@@ -8,6 +8,7 @@ API reference of `include/argx/parse.h`. Parsing reads argv with a validated sch
 | --- | --- |
 | `argx_parse`, `argx_parse_wide` | [Entry points](#entry-points) |
 | `argx_result_error`, `argx_result_command_count`, `argx_result_command_at`, `argx_result_command` | [Reading the result](#reading-the-result) |
+| `argx_result_terminal_option` | [Terminal flags](#terminal-flags) |
 | `argx_result_flag`, `argx_result_count`, `argx_result_option_source`, `argx_result_option_string`, `argx_result_option_int`, `argx_result_option_float`, `argx_result_option_choice`, `argx_result_option_value` | [Reading the result](#reading-the-result) |
 | `argx_result_positional_count`, `argx_result_positional_source`, `argx_result_positional_string`, `argx_result_positional_int`, `argx_result_positional_float`, `argx_result_positional_choice`, `argx_result_positional_value` | [Reading the result](#reading-the-result) |
 | `argx_result_error_kind`, `argx_result_error_message` | [Kinds and messages](#kinds-and-messages) |
@@ -25,14 +26,14 @@ argx_error_t argx_parse_wide(const argx_command_t *root, int argc, wchar_t *cons
 
 | Return value | `*out` | Meaning |
 | --- | --- | --- |
-| `ARGX_ERROR_NONE` | A result | Success |
+| `ARGX_ERROR_NONE` | A result | Success, including a parse that a [terminal flag](#terminal-flags) ended |
 | `ARGX_ERROR_INVALID_COMMAND_LINE` | A result | A parse error, held in the result with what was read before it |
 | `ARGX_ERROR_OUT_OF_MEMORY` | `NULL` | An allocation failed, including one reported by a conversion function |
 
 - **Destroy any non-`NULL` `*out`, parse errors included.**
 - Pass `argc` and `argv` as `main` received them. `argv[0]` is not parsed, and `argv[argc]` is not read.
 - Parsing changes nothing it is given and keeps no state: the same input always gives the same result, and threads may parse with one schema concurrently.
-- Elements are read once, in order, and parsing stops at the first one that does not match.
+- Elements are read once, in order, and parsing stops at the first one that does not match, or after a [terminal flag](#terminal-flags).
 
 ## Reading the result
 
@@ -66,7 +67,7 @@ Sources are written without `ARGX_SOURCE_`.
 | State | Flag | Count | Negatable flag | Option with a value, positional | Source |
 | --- | --- | --- | --- | --- | --- |
 | Given | `true` | The number of times | The last one given | The value | `COMMAND_LINE` |
-| Not given, default applied | — | — | — | The default | `DEFAULT` |
+| Not given, default applied (not after a parse error or a terminal flag) | — | — | — | The default | `DEFAULT` |
 | Not given, no default | `false` | 0 | The initial state | No value | `DEFAULT` for flags and counts; `NONE` otherwise |
 | Command not selected | `false` | 0 | The initial state | No value | `NONE` |
 
@@ -130,13 +131,47 @@ Columns are the functions without `argx_result_error_`; sources are without `ARG
 
 The result holds what was read before the error, with the source `COMMAND_LINE`: the selected commands, given flags and counts, and successfully converted values. Later elements are not read, and **defaults are not applied**.
 
+## Terminal flags
+
+```
+const argx_option_t *argx_result_terminal_option(const argx_result_t *result);
+```
+
+A flag made terminal with `argx_option_set_terminal` ([Attributes](schema.md#attributes)) ends the parse when it is read. Use it for flags such as `--help` and `--version`, which ask the program to do one thing and stop.
+
+When a terminal flag is read, as a long option or as a letter of a bundle:
+
+1. It is recorded as given, like any flag.
+2. The scan stops. The elements after it are not read: they are not checked, not matched against options and do not select subcommands. The letters after it in the same bundle are not matched either.
+3. Nothing is resolved: nothing required is checked, and **defaults are not applied**, as after a parse error.
+4. The parse returns `ARGX_ERROR_NONE`. `argx_result_command` returns the command that was current when the flag was read, and `argx_result_terminal_option` returns the flag.
+
+`argx_result_terminal_option` returns `NULL` when the command line was read to its end or has a parse error.
+
+| Command line | Result |
+| --- | --- |
+| `pack --help` | Success, command `pack`, although `pack` requires a subcommand |
+| `pack create --help` | Success, command `create`, although the required `--output` is missing |
+| `pack --help create` | Success, command `pack`: `create` is not read |
+| `pack --help --bogus`, `pack -hx` | Success: `--bogus` and `x` are not read |
+| `pack -vh` | Success: `-v` is read, then `-h` |
+| `pack create --bogus --help` | `UNKNOWN_OPTION`: the error comes first |
+| `pack --help=x` | `UNEXPECTED_VALUE`, as for any flag |
+| `pack --name --help` | `--help` is the value of `--name` |
+| `pack -- --help` | `--help` is not an option after the terminator |
+
+- **A success may miss something required.** Check the terminal flags with `argx_result_flag` or `argx_result_terminal_option` first, and read the rest of the result only when none was given.
+- Options are looked up in the current command only, so each command that should answer `--help` defines its own terminal `--help` ([Subcommands](syntax.md#subcommands)).
+- The help does not show which flags are terminal.
+
 ## `--help`
 
 `--help` is an ordinary flag defined in the schema and read with `argx_result_flag`. Parsing never generates or prints help ([Help and Usage](help.md)).
 
+- Make it terminal (`argx_option_set_terminal`), so that `pack --help` and `pack create --help` succeed even though they leave out what is required ([Terminal flags](#terminal-flags)).
 - With `--help` only on the root, `pack create --help` is an unknown option ([Subcommands](syntax.md#subcommands)).
-- `pack create --help` without the required `--output` is a parse error, but `--help` reads as given since it was read first. So is `pack --help`, which names no subcommand.
-- `pack create --bogus --help` stops at `--bogus`, so `--help` is not read.
+- A `--help` that is not terminal is read like any flag: `pack create --help` without the required `--output` is a parse error, but `--help` reads as given since it was read first. So is `pack --help`, which names no subcommand.
+- `pack create --bogus --help` stops at `--bogus`, so `--help` is not read, terminal or not.
 - Pass `argx_result_command` to `argx_help_write` for the help of the last selected command.
 
 ## Wide-character argv

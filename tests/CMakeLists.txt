@@ -28,6 +28,7 @@ argx_add_test(parse_error SOURCES public/parse_error_test.c support/test_allocat
 argx_add_test(parse_failure SOURCES public/parse_failure_test.c support/test_allocator.c)
 argx_add_test(parse_option SOURCES public/parse_option_test.c support/test_allocator.c)
 argx_add_test(parse_positional SOURCES public/parse_positional_test.c support/test_allocator.c)
+argx_add_test(parse_terminal SOURCES public/parse_terminal_test.c support/test_allocator.c)
 argx_add_test(parse_value SOURCES public/parse_value_test.c support/test_allocator.c)
 argx_add_test(parse_wide SOURCES public/parse_wide_test.c support/test_allocator.c)
 argx_add_test(positional SOURCES public/positional_test.c support/test_allocator.c)

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - `argx_command_set_summary()` and `argx_command_summary()`: a subcommand's summary for its parent's `Commands:` list in the help, separate from the description that the subcommand's own help shows. Without a summary, the list shows the first line of the description, as before. ([#4](https://github.com/vabelorg/argx/issues/4))
+- `argx_option_set_terminal()` and `argx_option_is_terminal()`: a terminal flag, such as `--help` or `--version`, ends the parse when it is read. The parse succeeds without reading the arguments after the flag, checking what is required or applying default values, so `pack --help` and `pack create --help` are no longer parse errors when they leave out what is required. `argx_result_terminal_option()` returns the flag that ended the parse. ([#8](https://github.com/vabelorg/argx/issues/8))
 
 ## [0.1.1] - 2026-11-16
 

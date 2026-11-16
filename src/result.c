@@ -210,6 +210,7 @@ static argx_error_t new_result(const argx_command_t *root, argx_result_t **out)
     result->error_positional = NULL;
     result->error_short_name = '\0';
     result->error_message = NULL;
+    result->terminal = NULL;
 
     return ARGX_ERROR_NONE;
 }
@@ -553,6 +554,18 @@ void argx_result_record_flag(argx_result_t *result, const argx_option_t *option)
 
     slot->on = true;
     slot->source = ARGX_SOURCE_COMMAND_LINE;
+}
+
+void argx_result_record_terminal(argx_result_t *result, const argx_option_t *option)
+{
+    assert(result != NULL);
+    assert(option != NULL);
+    assert(argx_option_is_terminal(option));
+    assert(argx_result_flag(result, option));
+    assert(result->error == ARGX_ERROR_NONE);
+    assert(result->terminal == NULL);
+
+    result->terminal = option;
 }
 
 void argx_result_record_state(argx_result_t *result, const argx_option_t *option, bool on)
@@ -1263,6 +1276,13 @@ const argx_command_t *argx_result_command(const argx_result_t *result)
     assert(result->frames.count > 0);
 
     return frame_at(result, result->frames.count - 1)->command;
+}
+
+const argx_option_t *argx_result_terminal_option(const argx_result_t *result)
+{
+    assert(result != NULL);
+
+    return result->terminal;
 }
 
 /* ---- Parse error details ------------------------------------------------ */

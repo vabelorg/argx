@@ -10,7 +10,7 @@ An option is recognized only on the command that defines it, and the library add
 
 ### Why does `pack create --help` report a missing required option?
 
-It is a parse error, but the result still holds `--help`. Read `--help` also when `argx_parse` returns `ARGX_ERROR_INVALID_COMMAND_LINE` ([Tutorial](../getting-started/tutorial.md#4-parse-argv-and-branch-on-the-error-code)).
+Because that `--help` is not terminal. A flag like any other is read, and then the parse checks what is required. Make `--help` terminal with `argx_option_set_terminal`: the parse then ends at `--help` and succeeds, and nothing required is checked ([Terminal flags](../references/parse.md#terminal-flags), [Tutorial](../getting-started/tutorial.md#2-define-the-schema)).
 
 ### Why is a command line without a subcommand a parse error?
 

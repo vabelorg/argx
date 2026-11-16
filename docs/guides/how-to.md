@@ -19,14 +19,9 @@ The command line may then end in `remote`, `argx_result_command` returns it, and
 `examples/pack/pack.c` prints the help when a command line ends without a subcommand, as most programs with subcommands do. To print the message of the parse error and the usage line instead, like any other parse error, drop that branch from the `ARGX_ERROR_INVALID_COMMAND_LINE` case:
 
 ```c
-if (help_was_given(result))
-{
-    status = print_help(result);
-}
-else
-{
+case ARGX_ERROR_INVALID_COMMAND_LINE:
     print_parse_error(result);
-}
+    break;
 ```
 
 `pack` alone then prints:

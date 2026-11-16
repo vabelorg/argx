@@ -75,6 +75,8 @@ struct argx_command
  *   kind can be.
  * - initial: the initial state, for the ARGX_OPTION_NEGATABLE kind. False
  *   for every other kind.
+ * - terminal: whether reading the option ends the parse. Only the
+ *   ARGX_OPTION_FLAG kind can be terminal.
  */
 struct argx_option
 {
@@ -89,6 +91,7 @@ struct argx_option
     char *default_value;
     bool required;
     bool initial;
+    bool terminal;
 };
 
 /*

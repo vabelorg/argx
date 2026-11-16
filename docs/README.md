@@ -22,7 +22,7 @@ API, one page for each public header, each starting with an index of its functio
 
 - [Schemas](references/schema.md) (`schema.h`): commands, options, positionals, validation, definition errors, and reading a schema.
 - [Value Types](references/types.md) (`type.h`): the built-in, choice and user-defined value types, converting values, and the order of destruction.
-- [Parsing](references/parse.md) (`parse.h`): parsing argv, reading the result, parse errors, `--help`, and wide-character argv.
+- [Parsing](references/parse.md) (`parse.h`): parsing argv, reading the result, parse errors, terminal flags and `--help`, and wide-character argv.
 - [Help and Usage](references/help.md) (`help.h`): generating the help and the usage line, the help options, the output, and failures.
 - [Allocator](references/alloc.md) (`alloc.h`): setting the allocator, and what its functions must do.
 - [Error Codes](references/errors.md) (`error.h`): every error code with its message and meaning.
