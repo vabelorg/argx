@@ -18,8 +18,10 @@
 #                       the script runs on (Windows: PE, macOS: MACHO,
 #                       otherwise ELF).
 #   ARGX_TOOL         The program that lists the exported symbols: nm for
-#                       ELF and MACHO, dumpbin for PE. Default: looked up on
-#                       the PATH.
+#                       ELF and MACHO; for PE, dumpbin (MSVC) or the objdump
+#                       of GNU binutils (MinGW), told apart by the name of
+#                       the program. Default: looked up on the PATH, for PE
+#                       dumpbin first, then objdump.
 #
 # The rules:
 #
@@ -166,8 +168,11 @@ endfunction()
 # spells them. Stops with a FATAL_ERROR if the tool fails or its output
 # cannot be read.
 function(argx_check_list_exports out_var)
-    if(ARGX_FORMAT STREQUAL "PE")
+    if(argx_check_tool_kind STREQUAL "dumpbin")
         set(arguments /NOLOGO /EXPORTS)
+    elseif(argx_check_tool_kind STREQUAL "objdump")
+        # The private headers, which hold the export table.
+        set(arguments -p)
     elseif(ARGX_FORMAT STREQUAL "MACHO")
         # The external symbols that the library defines.
         set(arguments -gU)
@@ -204,7 +209,40 @@ function(argx_check_list_exports out_var)
     string(REPLACE "\n" ";" lines "${output}")
 
     set(names "")
-    if(ARGX_FORMAT STREQUAL "PE")
+    if(argx_check_tool_kind STREQUAL "objdump")
+        # objdump announces the count, in hexadecimal, among the numbers of
+        # the export directory:
+        #     [Name Pointer/Ordinal] Table	0000006a
+        # and lists the names in their own table, which ends at the first
+        # line that is not one of its entries (a blank line):
+        #     [Ordinal/Name Pointer] Table
+        #         [   0] argx_command_add_count
+        # The brackets are "?" here (see above). Some versions of binutils
+        # write more between the index and the name, so the name is the last
+        # word of the line.
+        set(count "")
+        set(in_table FALSE)
+        foreach(line IN LISTS lines)
+            if(in_table)
+                if(NOT line MATCHES "^[ \t]+\\?[ \t]*[0-9]+\\?.*[ \t]([^ \t]+)[ \t]*$")
+                    break()
+                endif()
+                list(APPEND names "${CMAKE_MATCH_1}")
+            elseif(line MATCHES "^[ \t]*\\?Name Pointer/Ordinal\\? Table[ \t]+([0-9A-Fa-f]+)[ \t]*$")
+                math(EXPR count "0x${CMAKE_MATCH_1}")
+            elseif(line MATCHES "^\\?Ordinal/Name Pointer\\? Table")
+                set(in_table TRUE)
+            endif()
+        endforeach()
+        list(LENGTH names found)
+        if(NOT count STREQUAL "" AND NOT count EQUAL found)
+            message(FATAL_ERROR
+                "argx.exports: cannot read the output of\n"
+                "  ${ARGX_TOOL} ${arguments_text} ${ARGX_LIBRARY}\n"
+                "It announces ${count} exported names, and ${found} were read:\n"
+                "${output}")
+        endif()
+    elseif(argx_check_tool_kind STREQUAL "dumpbin")
         # dumpbin prints one line for each export:
         #     ordinal hint RVA      name
         #           1    0 00001000 argx_version
@@ -297,12 +335,14 @@ if(NOT ARGX_FORMAT MATCHES "^(ELF|MACHO|PE)$")
 endif()
 
 if(ARGX_FORMAT STREQUAL "PE")
-    set(argx_check_tool_name dumpbin)
+    set(argx_check_tool_names dumpbin objdump)
+    set(argx_check_tool_name "dumpbin or objdump")
 else()
+    set(argx_check_tool_names nm)
     set(argx_check_tool_name nm)
 endif()
 if(NOT DEFINED ARGX_TOOL OR ARGX_TOOL STREQUAL "")
-    find_program(argx_check_tool NAMES "${argx_check_tool_name}" NO_CACHE)
+    find_program(argx_check_tool NAMES ${argx_check_tool_names} NO_CACHE)
     if(NOT argx_check_tool)
         message(FATAL_ERROR
             "argx.exports: ${argx_check_tool_name}, which lists the exported "
@@ -316,6 +356,26 @@ elseif(NOT EXISTS "${ARGX_TOOL}" OR IS_DIRECTORY "${ARGX_TOOL}")
         "symbols, was not found: ARGX_TOOL is\n"
         "  ${ARGX_TOOL}\n"
         "which does not exist.")
+endif()
+
+# The kind of the tool, which decides its arguments and how its output is
+# read. For PE it is told by the name of the program: dumpbin, or objdump
+# with or without the prefix of a cross toolchain (x86_64-w64-mingw32-objdump).
+# The objdump of LLVM prints another format, which is not read.
+get_filename_component(argx_check_tool_file "${ARGX_TOOL}" NAME_WE)
+string(TOLOWER "${argx_check_tool_file}" argx_check_tool_file)
+if(NOT ARGX_FORMAT STREQUAL "PE")
+    set(argx_check_tool_kind nm)
+elseif(argx_check_tool_file STREQUAL "dumpbin")
+    set(argx_check_tool_kind dumpbin)
+elseif(argx_check_tool_file MATCHES "(^|-)objdump$"
+        AND NOT argx_check_tool_file MATCHES "llvm")
+    set(argx_check_tool_kind objdump)
+else()
+    message(FATAL_ERROR
+        "argx.exports: ARGX_TOOL is\n"
+        "  ${ARGX_TOOL}\n"
+        "For PE it must be dumpbin, or the objdump of GNU binutils.")
 endif()
 
 # ---------------------------------------------------------------------------

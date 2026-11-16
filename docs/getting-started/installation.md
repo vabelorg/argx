@@ -5,7 +5,7 @@ How to build ArgX and use it from your project. How to write a program with it i
 ## Requirements
 
 - CMake 3.21 or later.
-- A C99 compiler. ArgX builds on Linux (GCC, Clang), macOS (Clang) and Windows (MSVC).
+- A C99 compiler. ArgX builds on Linux (GCC, Clang), macOS (Clang) and Windows (MSVC, MinGW-w64 GCC).
 
 ## Building and testing
 
@@ -16,6 +16,7 @@ ctest --test-dir build
 ```
 
 - **The tests fetch [Naos](https://github.com/vabelorg/naos) from GitHub at configure time.** To configure offline, pass a local copy with `-DFETCHCONTENT_SOURCE_DIR_NAOS=<path-to-naos>` (`_deps/naos-src` of an earlier build works), or disable the tests with `-DARGX_BUILD_TESTS=OFF`.
+- When you cross-compile with the tests enabled, give a way to run the test programs with `-DCMAKE_CROSSCOMPILING_EMULATOR=<program>` (for example `wine` for MinGW-w64 on Linux). The build runs each test program to list its tests.
 - With a multi-config generator such as Visual Studio, Debug is the default. Pass `--config Release` to `cmake --build` and `-C Release` to `ctest` for other configurations.
 
 ## Build options
