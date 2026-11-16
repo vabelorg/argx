@@ -213,21 +213,27 @@ function(argx_check_list_exports out_var)
         # objdump announces the count, in hexadecimal, among the numbers of
         # the export directory:
         #     [Name Pointer/Ordinal] Table	0000006a
-        # and lists the names in their own table, which ends at the first
-        # line that is not one of its entries (a blank line):
+        # and lists the names in their own table. Older binutils (2.41):
         #     [Ordinal/Name Pointer] Table
         #         [   0] argx_command_add_count
-        # The brackets are "?" here (see above). Some versions of binutils
-        # write more between the index and the name, so the name is the last
-        # word of the line.
+        # Newer ones (2.47) add the ordinal base, a line of column titles, and
+        # the ordinal and the hint before the name:
+        #     [Ordinal/Name Pointer] Table -- Ordinal Base 1
+        #          Ordinal Hint Name
+        #         [   0] +base[   1] 0000 argx_command_add_count
+        # So the name is the last word of an entry, a line before the first
+        # entry is skipped, and the first line after the entries that is not
+        # one of them (a blank line) ends the table. The brackets are "?"
+        # here (see above).
         set(count "")
         set(in_table FALSE)
         foreach(line IN LISTS lines)
             if(in_table)
-                if(NOT line MATCHES "^[ \t]+\\?[ \t]*[0-9]+\\?.*[ \t]([^ \t]+)[ \t]*$")
+                if(line MATCHES "^[ \t]+\\?[ \t]*[0-9]+\\?.*[ \t]([^ \t]+)[ \t]*$")
+                    list(APPEND names "${CMAKE_MATCH_1}")
+                elseif(names)
                     break()
                 endif()
-                list(APPEND names "${CMAKE_MATCH_1}")
             elseif(line MATCHES "^[ \t]*\\?Name Pointer/Ordinal\\? Table[ \t]+([0-9A-Fa-f]+)[ \t]*$")
                 math(EXPR count "0x${CMAKE_MATCH_1}")
             elseif(line MATCHES "^\\?Ordinal/Name Pointer\\? Table")
