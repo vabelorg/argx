@@ -122,7 +122,7 @@ jobs:
       - run: ctest --test-dir build
 
   # Every supported environment, with a static and with a shared library:
-  # 4 x 2 = 8 jobs. Each job does the same for Debug and for Release:
+  # 5 x 2 = 10 jobs. Each job does the same for Debug and for Release:
   # configure, build, ctest, and the consumer check (tests/consumer/run.cmake).
   #
   # - Warnings are errors: ARGX_WARNINGS_AS_ERRORS is left at its default.
@@ -130,7 +130,7 @@ jobs:
   #   exported symbols.
   # - The configuration is given at every step (CMAKE_BUILD_TYPE, --config,
   #   -C), so that the same commands work with a single-config generator
-  #   (Linux, macOS) and with a multi-config one (Visual Studio). Each
+  #   (Linux, macOS, MinGW) and with a multi-config one (Visual Studio). Each
   #   configuration has a build directory of its own, as a single-config
   #   generator needs, and as the consumer check needs: it does not take a
   #   build directory with an empty CMAKE_BUILD_TYPE.
@@ -149,6 +149,7 @@ jobs:
           - linux-clang
           - macos-clang
           - windows-msvc
+          - windows-mingw
         shape:
           - static
           - shared
@@ -167,15 +168,22 @@ jobs:
           # No cc: the Visual Studio generator chooses MSVC itself.
           - environment: windows-msvc
             os: windows-latest
+          # GCC of MSYS2 (UCRT64), in the shell of MSYS2, with Ninja. Only
+          # the programs of MSYS2 are on the PATH: no tool of Visual Studio.
+          - environment: windows-mingw
+            os: windows-latest
+            cc: gcc
+            shell: msys2 {0}
           - shape: static
             shared: "OFF"
           - shape: shared
             shared: "ON"
     # One shell for all the environments (the default on Windows is pwsh), so
-    # that every step is one command line, the same everywhere.
+    # that every step is one command line, the same everywhere. MinGW takes
+    # the bash of MSYS2.
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.shell || 'bash' }}
     env:
       # The C compiler that CMake takes. Empty on Windows, which is the same
       # as not set.
@@ -188,6 +196,21 @@ jobs:
       - name: pkg-config (macOS)
         if: runner.os == 'macOS'
         run: command -v pkg-config || brew install pkgconf
+
+      # The toolchain of MinGW, from MSYS2. Ninja is the generator.
+      - name: MSYS2 (Windows MinGW)
+        if: matrix.environment == 'windows-mingw'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: Generator (Windows MinGW)
+        if: matrix.environment == 'windows-mingw'
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
 
       - name: Configure (Debug)
         run: cmake -S . -B build/Debug -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=${{ matrix.shared }}

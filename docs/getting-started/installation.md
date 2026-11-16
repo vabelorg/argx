@@ -5,7 +5,7 @@ How to build ArgX and use it from your project. How to write a program with it i
 ## Requirements
 
 - CMake 3.21 or later.
-- A C99 compiler. ArgX builds on Linux (GCC, Clang), macOS (Clang) and Windows (MSVC).
+- A C99 compiler. ArgX builds on Linux (GCC, Clang), macOS (Clang) and Windows (MSVC, MinGW-w64 GCC).
 
 ## Building and testing
 
