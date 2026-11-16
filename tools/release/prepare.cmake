@@ -56,11 +56,12 @@
 #      breaking change as "**BREAKING**: " under Changed or Removed, and allow
 #      the version (argx_changelog_check_version() in ArgXChangelog.cmake).
 #      The version, or the version a pre-release leads to (0.2.0 for
-#      0.2.0-rc.1), is compared with the highest release tag that is not a
-#      pre-release: a patch release may have Fixed and Security entries only,
-#      and from 1.0 on a **BREAKING** entry needs a major release. Without
-#      such a tag (the first release), the version is not checked against
-#      the entries.
+#      0.2.0-rc.1), is compared with the earlier release: the highest release
+#      tag, or version listed in the changelog, that is not a pre-release. A
+#      patch release may have Fixed and Security entries only, and from 1.0
+#      on a **BREAKING** entry needs a major release. Without an earlier
+#      release (the first release), the version is not checked against the
+#      entries.
 #
 # Then the new text of both files is made in full (which may still stop the
 # script, for instance when the changelog lists a higher version), and only
@@ -250,6 +251,25 @@ endif()
 
 # --- 7. The version against the entries -------------------------------------------
 
+# The base is also the newest release in the changelog that is not a
+# pre-release, when it is higher than the tags give: a list of tags that lacks
+# a release, as in a clone without tags, does not turn the check off.
+foreach(_argx_prepare_listed IN LISTS _argx_prepare_c_VERSIONS)
+    argx_semver_parse("${_argx_prepare_listed}" _argx_prepare_l)
+    if(NOT _argx_prepare_l_PRERELEASE STREQUAL "")
+        continue()
+    endif()
+    if(_argx_prepare_base STREQUAL "")
+        set(_argx_prepare_base "${_argx_prepare_listed}")
+    else()
+        argx_semver_compare("${_argx_prepare_listed}" "${_argx_prepare_base}" _argx_prepare_order)
+        if(_argx_prepare_order EQUAL 1)
+            set(_argx_prepare_base "${_argx_prepare_listed}")
+        endif()
+    endif()
+    # The versions are listed newest first.
+    break()
+endforeach()
 argx_changelog_check_version("${_argx_prepare_changelog_text}" "${_argx_prepare_version}"
     "${_argx_prepare_base}" _argx_prepare_k)
 if(NOT _argx_prepare_k_VALID)

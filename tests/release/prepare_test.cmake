@@ -428,6 +428,12 @@ expect_refused("a pre-release of a patch with Added" refused_patch_pre "${header
 expect_refused("a patch after a pre-release tag" refused_patch_after_pre "${header_0_1_0}"
     "### Added\n\n- A function.\n" 0.1.1 "v0.1.0\nv0.1.1-rc.1\n"
     "the version 0.1.1 is a patch release after 0.1.0")
+# Without the tag v0.1.0, as in a clone without tags, the release 0.1.0 listed
+# in the changelog is the base.
+expect_refused("a patch without the tags" refused_patch_no_tags "${header_0_1_0}"
+    "### Added\n\n- A function.\n" 0.1.1 "" "the version 0.1.1 is a patch release after 0.1.0")
+expect_allowed("a patch without the tags, with a fix" allowed_patch_no_tags "${header_0_1_0}"
+    "${fixed_body}" 0.1.1 "" false "A patch release after 0.1.0")
 expect_refused("a patch, check only" refused_patch_check "${header_0_1_0}"
     "### Added\n\n- A function.\n" 0.1.1 "v0.1.0\n" "is a patch release after 0.1.0"
     "-DARGX_RELEASE_CHECK_ONLY=ON")
