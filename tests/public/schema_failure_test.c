@@ -610,6 +610,20 @@ static bool set_command_text(sweep_t *sweep, argx_command_t *command, const char
     return true;
 }
 
+static bool set_command_summary(sweep_t *sweep, argx_command_t *command, const char *text)
+{
+    argx_error_t error;
+
+    begin_call(sweep);
+    error = argx_command_set_summary(command, text);
+    if (!end_call(sweep, error, true))
+    {
+        return false;
+    }
+    NAOS_CHECK_STR_EQ(argx_command_summary(command), text);
+    return true;
+}
+
 static bool set_option_text(sweep_t *sweep, text_attribute_t attribute, argx_option_t *option,
                             const char *text)
 {
@@ -812,6 +826,8 @@ static bool set_attributes(sweep_t *sweep, const tree_t *tree)
            set_command_text(sweep, sweep->root, "The application, described again.") &&
            set_command_text(sweep, tree->build, "Builds.") &&
            set_command_text(sweep, tree->build, "") &&
+           set_command_summary(sweep, tree->build, "Builds.") &&
+           set_command_summary(sweep, tree->build, "Builds the project, again.") &&
            set_option_text(sweep, OPTION_DESCRIPTION, tree->verbose, "Says more.") &&
            set_option_text(sweep, OPTION_DESCRIPTION, tree->verbose, "Says a lot more than before.") &&
            set_option_text(sweep, OPTION_DESCRIPTION, tree->color, "Colors the output.") &&

@@ -41,7 +41,7 @@ Options:
 | --- | --- | --- | --- |
 | 1 | Usage line | Always | See [Usage line](#usage-line) |
 | 2 | Description of the command | It is set | From column 0, wrapped, without a trailing newline |
-| 3 | `Commands:` | There are subcommands | The direct subcommands, with the first line of each description |
+| 3 | `Commands:` | There are subcommands | The direct subcommands, each with its summary or, without one, the first line of its description |
 | 4 | `Arguments:` | There are positionals | The positionals, with full descriptions |
 | 5 | `Options:` | There are options | The options, with full descriptions |
 
@@ -182,7 +182,8 @@ Options:
 
 ## Descriptions
 
-- **A description of only blanks and newlines counts as not set.** In `Commands:`, a subcommand whose first line is blank shows only its heading.
+- **A description or summary of only blanks and newlines counts as not set.** In `Commands:`, a subcommand without a summary whose first line is blank shows only its heading.
+- **A summary is shown whole in `Commands:`,** wrapped like a description, with its trailing blanks and newlines dropped. It never appears in the command's own help.
 - **Trailing blanks are dropped; trailing newlines are kept:** `"foo\n  "` is `"foo\n"`.
 - **A leading newline or blank line is kept,** and may add empty lines between parts. Its exact output may change in later versions.
 

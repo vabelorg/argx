@@ -7,7 +7,8 @@
  *
  *   1. creates a choice value type and a user-defined value type;
  *   2. defines the schema: every kind of option, positionals, subcommands,
- *      descriptions for the help, and -h, --help on every command;
+ *      descriptions and a summary for the help, and -h, --help on every
+ *      command;
  *   3. validates it, and tells which definition a failed validation points to;
  *   4. parses argv and branches on the error code, reading --help in both
  *      cases that give a result;
@@ -285,7 +286,14 @@ static argx_error_t define_list(pack_schema_t *schema)
     argx_error_t error;
 
     TRY(argx_command_add_subcommand(schema->root, "list", &schema->list));
-    TRY(argx_command_set_description(schema->list, "List the files of an archive."));
+    /*
+     * The summary is for the "Commands:" list of "pack --help", the
+     * description for "pack list --help".
+     */
+    TRY(argx_command_set_summary(schema->list, "List the files of an archive."));
+    TRY(argx_command_set_description(schema->list,
+                                     "Print the names of the files in an archive that match a "
+                                     "pattern, one per line."));
     TRY(add_help(schema->list));
 
     TRY(argx_command_add_positional(schema->list, "archive", argx_type_string(),

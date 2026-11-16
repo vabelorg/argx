@@ -470,6 +470,56 @@ NAOS_TEST(a_description_is_copied)
     destroy_root(root);
 }
 
+/* ---- Summary ----------------------------------------------------------- */
+
+NAOS_TEST(a_summary_is_set_and_replaced)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *build = add(root, "build");
+
+    NAOS_CHECK_TRUE(argx_command_summary(build) == NULL);
+
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(build, "Builds."), ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_command_summary(build) != NULL);
+    NAOS_CHECK_STR_EQ(argx_command_summary(build), "Builds.");
+
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(build, "Builds the project."), ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_command_summary(build) != NULL);
+    NAOS_CHECK_STR_EQ(argx_command_summary(build), "Builds the project.");
+
+    /* The empty string is a summary, and is not "no summary". */
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(build, ""), ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_command_summary(build) != NULL);
+    NAOS_CHECK_STR_EQ(argx_command_summary(build), "");
+
+    /* It is separate from the description, and each command has its own. */
+    NAOS_CHECK_TRUE(argx_command_description(build) == NULL);
+    NAOS_CHECK_TRUE(argx_command_summary(root) == NULL);
+
+    /* A root can have one too. */
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(root, "An application."), ARGX_ERROR_NONE);
+    NAOS_REQUIRE_TRUE(argx_command_summary(root) != NULL);
+    NAOS_CHECK_STR_EQ(argx_command_summary(root), "An application.");
+    NAOS_CHECK_STR_EQ(argx_command_summary(build), "");
+
+    destroy_root(root);
+}
+
+NAOS_TEST(a_summary_is_copied)
+{
+    char buffer[] = "Does things.";
+    argx_command_t *root = create_root();
+
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(root, buffer), ARGX_ERROR_NONE);
+
+    memset(buffer, 'x', sizeof(buffer) - 1);
+    NAOS_REQUIRE_TRUE(argx_command_summary(root) != NULL);
+    NAOS_CHECK_TRUE(argx_command_summary(root) != buffer);
+    NAOS_CHECK_STR_EQ(argx_command_summary(root), "Does things.");
+
+    destroy_root(root);
+}
+
 /* ---- Destruction ------------------------------------------------------- */
 
 NAOS_TEST(destroy_does_nothing_for_null)
@@ -485,7 +535,7 @@ NAOS_TEST(destroy_does_nothing_for_null)
 
 /*
  * One destruction of the root frees the whole tree: commands, names,
- * descriptions and the arrays.
+ * descriptions, summaries and the arrays.
  */
 NAOS_TEST(destroy_frees_the_whole_tree)
 {
@@ -500,6 +550,9 @@ NAOS_TEST(destroy_frees_the_whole_tree)
     NAOS_CHECK_INT_EQ(argx_command_set_description(remote, "Remotes."), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_command_set_description(mirror, "Mirrors."), ARGX_ERROR_NONE);
     NAOS_CHECK_INT_EQ(argx_command_set_description(mirror, "Mirrors a remote."), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(remote, "Manages remotes."), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(mirror, "Mirrors."), ARGX_ERROR_NONE);
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(mirror, "Mirrors a remote."), ARGX_ERROR_NONE);
 
     NAOS_CHECK_TRUE(argx_test_allocator_live() > 0);
 
@@ -708,6 +761,31 @@ NAOS_TEST(a_failed_description_keeps_the_old_one)
     destroy_root(root);
 }
 
+/*
+ * When the copy of a new summary cannot be allocated, the command keeps
+ * the summary it had.
+ */
+NAOS_TEST(a_failed_summary_keeps_the_old_one)
+{
+    argx_command_t *root = create_root();
+
+    argx_test_allocator_fail_at(argx_test_allocator_requests() + 1);
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(root, "First."), ARGX_ERROR_OUT_OF_MEMORY);
+    NAOS_CHECK_TRUE(argx_command_summary(root) == NULL);
+
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(root, "First."), ARGX_ERROR_NONE);
+
+    argx_test_allocator_fail_at(argx_test_allocator_requests() + 1);
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(root, "Second."), ARGX_ERROR_OUT_OF_MEMORY);
+    NAOS_REQUIRE_TRUE(argx_command_summary(root) != NULL);
+    NAOS_CHECK_STR_EQ(argx_command_summary(root), "First.");
+
+    NAOS_CHECK_INT_EQ(argx_command_set_summary(root, "Second."), ARGX_ERROR_NONE);
+    NAOS_CHECK_STR_EQ(argx_command_summary(root), "Second.");
+
+    destroy_root(root);
+}
+
 /* ---- Optional subcommands --------------------------------------------- */
 
 NAOS_TEST(subcommands_are_required_until_made_optional)
@@ -770,6 +848,11 @@ NAOS_SUITE(description,
     NAOS_ADD_TEST(a_description_is_copied)
 )
 
+NAOS_SUITE(summary,
+    NAOS_ADD_TEST(a_summary_is_set_and_replaced),
+    NAOS_ADD_TEST(a_summary_is_copied)
+)
+
 NAOS_SUITE(optional_subcommands,
     NAOS_ADD_TEST(subcommands_are_required_until_made_optional),
     NAOS_ADD_TEST(subcommands_can_be_made_optional_before_any_is_added)
@@ -783,13 +866,15 @@ NAOS_SUITE(destroy,
 NAOS_SUITE(failure,
     NAOS_ADD_TEST(creation_frees_everything_when_an_allocation_fails),
     NAOS_ADD_TEST(a_failed_addition_leaves_the_tree_as_it_was),
-    NAOS_ADD_TEST(a_failed_description_keeps_the_old_one)
+    NAOS_ADD_TEST(a_failed_description_keeps_the_old_one),
+    NAOS_ADD_TEST(a_failed_summary_keeps_the_old_one)
 )
 
 NAOS_MAIN(
     NAOS_ADD_SUITE(create),
     NAOS_ADD_SUITE(subcommand),
     NAOS_ADD_SUITE(description),
+    NAOS_ADD_SUITE(summary),
     NAOS_ADD_SUITE(optional_subcommands),
     NAOS_ADD_SUITE(destroy),
     NAOS_ADD_SUITE(failure)

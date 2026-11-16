@@ -286,8 +286,10 @@ ARGX_API argx_error_t argx_help_write_usage(const argx_command_t *command,
  * - command's description, from the start of the line, without its
  *   trailing newlines.
  * - "Commands:" and, each on its own line, the subcommands of command
- *   itself, not their subcommands: the name and the first line of the
- *   description, that is, the part before its first newline.
+ *   itself, not their subcommands: the name and the whole summary
+ *   (argx_command_set_summary()) or, when the summary is not set, the
+ *   first line of the description, that is, the part before its first
+ *   newline. command's own summary is not written.
  * - "Arguments:" and, each on its own line, command's positionals: the
  *   heading, written as in the usage line, the whole description and the
  *   annotations.
@@ -326,13 +328,15 @@ ARGX_API argx_error_t argx_help_write_usage(const argx_command_t *command,
  * description without annotations are not written. In the run of blanks
  * and newlines at the end of a description, after its last other byte,
  * the blanks are ignored and the newlines are kept: "foo\n  " gives the
- * same text as "foo\n". A subcommand has no annotations.
+ * same text as "foo\n". A subcommand has no annotations, and its summary
+ * is written like a description without annotations.
  *
- * A description that contains nothing but blanks and newlines counts as
- * not set: an empty one, and one such as " \n". In the subcommand list, a
- * subcommand's description is judged by its first line alone: when that
- * line holds nothing but blanks, the subcommand counts as having no
- * description there.
+ * A description or summary that contains nothing but blanks and newlines
+ * counts as not set: an empty one, and one such as " \n". In the
+ * subcommand list, a subcommand without a summary that is set has its
+ * description judged by its first line alone: when that line holds
+ * nothing but blanks, the subcommand counts as having no description
+ * there.
  *
  * A part with nothing to show is left out, together with its title: a
  * description that is not set, a list without items. One empty line

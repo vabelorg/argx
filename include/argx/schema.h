@@ -20,12 +20,13 @@
  *   string after the call.
  * - Returned handles and strings are valid until the root is destroyed,
  *   with one exception. A string read from an attribute that can be set
- *   again (a command's description; an option's description, value name
- *   and default value; a positional's description and default value) is
- *   valid until the root is destroyed or that attribute is set again,
- *   whichever comes first. Setting an attribute again frees its old
- *   string. Names are never replaced. The caller does not free what is
- *   returned. A handle does not change when more is added to the tree.
+ *   again (a command's description and summary; an option's
+ *   description, value name and default value; a positional's description
+ *   and default value) is valid until the root is destroyed or that
+ *   attribute is set again, whichever comes first. Setting an attribute
+ *   again frees its old string. Names are never replaced. The caller does
+ *   not free what is returned. A handle does not change when more is
+ *   added to the tree.
  *
  * Errors:
  *
@@ -188,6 +189,26 @@ ARGX_API argx_error_t argx_command_add_subcommand(argx_command_t *command, const
 ARGX_API argx_error_t argx_command_set_description(argx_command_t *command, const char *text);
 
 /*
+ * Sets command's summary to a copy of text, replacing any earlier
+ * summary. The summary is shown for command in its parent's "Commands:"
+ * list in the help, in place of the first line of the description; it is
+ * not shown in command's own help, which shows the whole description. A
+ * summary that holds nothing but blanks and newlines, such as the empty
+ * string, counts as not set there, and the list shows the first line of
+ * the description. A root is in no list, so its summary is not shown; it
+ * can still be set and read. See argx_help_write().
+ *
+ * Returns ARGX_ERROR_NONE on success, and ARGX_ERROR_OUT_OF_MEMORY when
+ * the allocation fails; the command then keeps the summary it had.
+ *
+ * Preconditions:
+ *
+ * - command is not NULL. Checked with assert.
+ * - text is not NULL. Checked with assert.
+ */
+ARGX_API argx_error_t argx_command_set_summary(argx_command_t *command, const char *text);
+
+/*
  * Sets whether a command line may end without naming one of command's
  * subcommands. By default it may not: when command is the last command
  * selected on a command line and has subcommands, parsing reports
@@ -228,6 +249,15 @@ ARGX_API const char *argx_command_name(const argx_command_t *command);
  * - command is not NULL. Checked with assert.
  */
 ARGX_API const char *argx_command_description(const argx_command_t *command);
+
+/*
+ * Returns the summary of command, or NULL when none has been set.
+ *
+ * Preconditions:
+ *
+ * - command is not NULL. Checked with assert.
+ */
+ARGX_API const char *argx_command_summary(const argx_command_t *command);
 
 /*
  * Returns whether a command line may end without naming one of command's
