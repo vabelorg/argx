@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-16
+
 ### Fixed
 
 - The export check `argx.exports` works with MinGW-w64: it reads the export table of the DLL with the `objdump` of the toolchain instead of `dumpbin`, which only MSVC has. MinGW-w64 is now built and tested in CI. ([#2](https://github.com/vabelorg/argx/issues/2))
@@ -20,5 +22,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Help and usage text generated from the schema.
 - Builds on Linux, macOS and Windows; usable through CMake or pkg-config.
 
-[Unreleased]: https://github.com/vabelorg/argx/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vabelorg/argx/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/vabelorg/argx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/vabelorg/argx/releases/tag/v0.1.0
