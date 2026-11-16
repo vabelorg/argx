@@ -611,6 +611,109 @@ NAOS_TEST(subcommand_description_is_cut_at_first_newline)
     destroy_root(root);
 }
 
+/* Sets the summary of command; it must succeed. */
+static void summarize(argx_command_t *command, const char *summary)
+{
+    NAOS_REQUIRE_TRUE(argx_command_set_summary(command, summary) == ARGX_ERROR_NONE);
+}
+
+/*
+ * A subcommand's summary takes the place of its description in the list,
+ * and only there: the subcommand's own help shows the whole description
+ * and no summary. A subcommand without a summary keeps the first line of
+ * its description, and one with a summary but no description shows the
+ * summary.
+ */
+NAOS_TEST(subcommand_summary_is_used_in_the_list_only)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *sync = add_sub(root, "sync",
+                                   "Compare the local directory with the remote and upload the "
+                                   "files that are new or changed.");
+    argx_command_t *push = add_sub(root, "push", NULL);
+
+    add_sub(root, "list", "List the remotes\nOne per line.");
+    summarize(sync, "Copy changed files to the remote");
+    summarize(push, "Push the changes");
+    summarize(root, "Not shown anywhere");
+    validate(root);
+
+    check_help(root,
+               "Usage: tool <COMMAND>\n"
+               "\n"
+               "Commands:\n"
+               "  sync  Copy changed files to the remote\n"
+               "  push  Push the changes\n"
+               "  list  List the remotes\n");
+
+    check_help(sync,
+               "Usage: tool sync\n"
+               "\n"
+               "Compare the local directory with the remote and upload the files that are new or\n"
+               "changed.\n");
+
+    check_help(push, "Usage: tool push\n");
+
+    destroy_root(root);
+}
+
+/*
+ * A summary that holds nothing but blanks and newlines counts as not set:
+ * the list shows the first line of the description, or the heading alone
+ * when there is none.
+ */
+NAOS_TEST(blank_summary_falls_back_to_the_description)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *add = add_sub(root, "add", "Add a remote\n\nThe remote is not fetched.");
+    argx_command_t *remove = add_sub(root, "remove", "Remove a remote");
+    argx_command_t *rename = add_sub(root, "rename", NULL);
+
+    summarize(add, "");
+    summarize(remove, " \n ");
+    summarize(rename, "\n");
+    validate(root);
+
+    check_help(root,
+               "Usage: tool <COMMAND>\n"
+               "\n"
+               "Commands:\n"
+               "  add     Add a remote\n"
+               "  remove  Remove a remote\n"
+               "  rename\n");
+
+    destroy_root(root);
+}
+
+/*
+ * A summary is written whole, like the description of an option: a
+ * newline in it goes on at the description column, its trailing blanks and
+ * newlines are dropped, and it is broken at the width.
+ */
+NAOS_TEST(subcommand_summary_is_written_whole_and_wrapped)
+{
+    argx_command_t *root = create_root();
+    argx_command_t *add = add_sub(root, "add", "Not shown in the list");
+    argx_command_t *fetch = add_sub(root, "fetch", NULL);
+    argx_help_options_t *options = create_options(40, 2);
+
+    summarize(add, "Add a remote\nand fetch it  \n\n ");
+    summarize(fetch, "Download the objects and the references of a remote");
+    validate(root);
+
+    check_help_with(root, options,
+                    "Usage: tool <COMMAND>\n"
+                    "\n"
+                    "Commands:\n"
+                    "  add    Add a remote\n"
+                    "         and fetch it\n"
+                    "  fetch  Download the objects and the\n"
+                    "         references of a remote\n");
+
+    argx_help_options_destroy(options);
+    destroy_root(root);
+}
+
 /*
  * The description of a positional is written whole: after a newline in it
  * the text goes on at the description column.
@@ -1465,6 +1568,9 @@ NAOS_SUITE(help,
     NAOS_ADD_TEST(items_come_in_definition_order),
     NAOS_ADD_TEST(grandchildren_are_not_listed),
     NAOS_ADD_TEST(subcommand_description_is_cut_at_first_newline),
+    NAOS_ADD_TEST(subcommand_summary_is_used_in_the_list_only),
+    NAOS_ADD_TEST(blank_summary_falls_back_to_the_description),
+    NAOS_ADD_TEST(subcommand_summary_is_written_whole_and_wrapped),
     NAOS_ADD_TEST(positional_description_is_written_whole),
     NAOS_ADD_TEST(empty_description_is_not_written),
     NAOS_ADD_TEST(item_without_description_is_heading_only),

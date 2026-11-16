@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `argx_command_set_summary()` and `argx_command_summary()`: a subcommand's summary for its parent's `Commands:` list in the help, separate from the description that the subcommand's own help shows. Without a summary, the list shows the first line of the description, as before. ([#4](https://github.com/vabelorg/argx/issues/4))
+
 ## [0.1.1] - 2026-11-16
 
 ### Fixed

@@ -20,6 +20,12 @@ argx_add_example_test(pack help
 argx_add_example_test(pack root-help
     "^Usage: pack \\[OPTIONS\\] <COMMAND>\r?\n\r?\nPack files into an archive\\.\r?\n"
     ARGS --help)
+argx_add_example_test(pack commands
+    "\r?\nCommands:\r?\n  create +Create an archive\\.\r?\n  list +List the files of an archive\\.\r?\n"
+    ARGS --help)
+argx_add_example_test(pack list-help
+    "^Usage: pack list \\[OPTIONS\\] <archive> \\[pattern\\]\r?\n\r?\nPrint the names of the files in an archive that match a pattern, one per line\\.\r?\n"
+    ARGS list --help)
 argx_add_example_test(pack parse-error
     "^pack: missing required option '--output'\r?\nUsage: pack create \\[OPTIONS\\] --output <FILE> <file>\\.\\.\\.\r?\nFor more information, try '--help'\\.\r?\n$"
     ARGS create a.txt)

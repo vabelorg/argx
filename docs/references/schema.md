@@ -6,12 +6,12 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 
 | Functions | Section |
 | --- | --- |
-| `argx_command_create`, `argx_command_destroy`, `argx_command_add_subcommand`, `argx_command_set_description`, `argx_command_set_subcommand_optional` | [Commands](#commands) |
+| `argx_command_create`, `argx_command_destroy`, `argx_command_add_subcommand`, `argx_command_set_description`, `argx_command_set_summary`, `argx_command_set_subcommand_optional` | [Commands](#commands) |
 | `argx_command_add_flag`, `argx_command_add_negatable`, `argx_command_add_count`, `argx_command_add_value` | [Options](#options) |
 | `argx_option_set_description`, `argx_option_set_value_name`, `argx_option_set_required`, `argx_option_set_default`, `argx_option_set_initial` | [Attributes](#attributes) |
 | `argx_command_add_positional`, `argx_positional_set_description`, `argx_positional_set_default` | [Positionals](#positionals) |
 | `argx_command_validate`, `argx_command_is_validated` | [Validation](#validation) |
-| `argx_command_name`, `argx_command_description`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_option_count`, `argx_command_option_at`, `argx_command_positional_count`, `argx_command_positional_at`, `argx_command_subcommand_count`, `argx_command_subcommand_at`, `argx_command_find_short`, `argx_command_find_long`, `argx_command_find_subcommand` | [Reading a schema](#reading-a-schema) |
+| `argx_command_name`, `argx_command_description`, `argx_command_summary`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_option_count`, `argx_command_option_at`, `argx_command_positional_count`, `argx_command_positional_at`, `argx_command_subcommand_count`, `argx_command_subcommand_at`, `argx_command_find_short`, `argx_command_find_long`, `argx_command_find_subcommand` | [Reading a schema](#reading-a-schema) |
 | `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial` | [Reading a schema](#reading-a-schema) |
 | `argx_positional_command`, `argx_positional_name`, `argx_positional_arity`, `argx_positional_type`, `argx_positional_description`, `argx_positional_default` | [Reading a schema](#reading-a-schema) |
 
@@ -22,6 +22,7 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 | Create the root | `argx_command_create` | Any non-empty name |
 | Add a subcommand | `argx_command_add_subcommand` | An ASCII letter or digit, then letters, digits, `-` or `_` |
 | Set the description | `argx_command_set_description` | May be empty |
+| Set the summary for the parent's `Commands:` list | `argx_command_set_summary` | May be empty |
 | Let a command line end without a subcommand | `argx_command_set_subcommand_optional` | `false` until set |
 | Destroy the tree | `argx_command_destroy` | On the root only. `NULL` does nothing |
 
@@ -29,7 +30,7 @@ API reference of `include/argx/schema.h`. A schema is a tree of commands, each w
 - A command cannot have both positionals and subcommands.
 - **Subcommands are required by default.** A command line that ends in a command with subcommands, without naming one, is the parse error `MISSING_SUBCOMMAND`, and the usage line shows `<COMMAND>`. Set `argx_command_set_subcommand_optional(command, true)` for a command that does something of its own without a subcommand, such as `git remote`; the command line then ends in that command, and the usage line shows `[COMMAND]` ([Subcommands](syntax.md#subcommands)).
 - Making the subcommands of a command without subcommands optional is a validation error, since they can be added after the call.
-- Only the first line of a description appears in the parent's `Commands:` list ([Help Text Layout](help-layout.md#structure)).
+- The parent's `Commands:` list shows the summary if it is set, and otherwise only the first line of the description. The command's own help shows the whole description and never the summary. A root's summary is not shown, since the root is in no list ([Help Text Layout](help-layout.md#structure)).
 
 ## Options
 
@@ -130,7 +131,7 @@ A failed add or set leaves the schema and its validation state unchanged, writes
 
 ### Errors when adding and setting
 
-Within a function, the first matching row is returned. Every function can also return `ARGX_ERROR_OUT_OF_MEMORY`, which is the only failure of setting a description.
+Within a function, the first matching row is returned. Every function can also return `ARGX_ERROR_OUT_OF_MEMORY`, which is the only failure of setting a description or a summary.
 
 **`argx_command_create`**
 
@@ -220,7 +221,7 @@ The read functions take `const` handles, change nothing and never fail.
 
 | Object | Functions |
 | --- | --- |
-| Command | `argx_command_name`, `argx_command_description`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_is_validated` |
+| Command | `argx_command_name`, `argx_command_description`, `argx_command_summary`, `argx_command_is_subcommand_optional`, `argx_command_parent`, `argx_command_is_validated` |
 | Enumeration | `argx_command_option_count`/`_at`, `argx_command_positional_count`/`_at`, `argx_command_subcommand_count`/`_at` |
 | Lookup | `argx_command_find_short`, `argx_command_find_long`, `argx_command_find_subcommand` |
 | Option | `argx_option_command`, `argx_option_kind`, `argx_option_short_name`, `argx_option_long_name`, `argx_option_negated_name`, `argx_option_type`, `argx_option_description`, `argx_option_value_name`, `argx_option_is_required`, `argx_option_default`, `argx_option_initial` |
@@ -229,7 +230,7 @@ The read functions take `const` handles, change nothing and never fail.
 - Enumeration follows the order added, from index 0.
 - Unset strings and handles read as `NULL`, a missing short name as `'\0'`, and an attribute that does not apply to the kind as `NULL` or `false`.
 - Lookups search only the given command, comparing whole names. `argx_command_find_long` matches the first `length` bytes of `name` (so `name=value` needs no copy), also matches negated names, and writes which matched to `*negated` when found. `argx_command_find_short('\0')` returns `NULL`.
-- Returned strings and handles live until the root is destroyed, except that a description, value name or default lives only until that attribute is set again.
+- Returned strings and handles live until the root is destroyed, except that a description, summary, value name or default lives only until that attribute is set again.
 - Reads may run concurrently while the schema is not changed. Changing or validating must not overlap any other call on the schema.
 
 ## Preconditions

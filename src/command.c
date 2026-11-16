@@ -88,6 +88,7 @@ static void free_command(argx_command_t *command)
     argx_vec_destroy(&command->subcommands);
     argx_vec_destroy(&command->options);
     argx_vec_destroy(&command->positionals);
+    argx_free(command->summary);
     argx_free(command->description);
     argx_free(command->name);
     argx_free(command);
@@ -115,6 +116,7 @@ static argx_command_t *new_command(const char *name, argx_command_t *parent)
     }
 
     command->description = NULL;
+    command->summary = NULL;
     command->parent = parent;
     argx_vec_init(&command->options, sizeof(argx_option_t *));
     argx_vec_init(&command->positionals, sizeof(argx_positional_t *));
@@ -282,6 +284,24 @@ argx_error_t argx_command_set_description(argx_command_t *command, const char *t
     return ARGX_ERROR_NONE;
 }
 
+argx_error_t argx_command_set_summary(argx_command_t *command, const char *text)
+{
+    argx_error_t error;
+
+    assert(command != NULL);
+    assert(text != NULL);
+
+    error = argx_schema_replace_string(&command->summary, text);
+    if (error != ARGX_ERROR_NONE)
+    {
+        return error;
+    }
+
+    argx_schema_touch(command);
+
+    return ARGX_ERROR_NONE;
+}
+
 argx_error_t argx_command_set_subcommand_optional(argx_command_t *command, bool optional)
 {
     assert(command != NULL);
@@ -306,6 +326,13 @@ const char *argx_command_description(const argx_command_t *command)
     assert(command != NULL);
 
     return command->description;
+}
+
+const char *argx_command_summary(const argx_command_t *command)
+{
+    assert(command != NULL);
+
+    return command->summary;
 }
 
 bool argx_command_is_subcommand_optional(const argx_command_t *command)

@@ -29,6 +29,8 @@
  *
  * - name: the name. Never NULL and never empty.
  * - description: the description, or NULL when none has been set.
+ * - summary: the summary for the parent's command list, or NULL when none
+ *   has been set.
  * - parent: the command this one is a subcommand of. NULL for a root.
  * - options: the options, as argx_option_t *, in definition order.
  * - positionals: the positionals, as argx_positional_t *, in definition
@@ -44,6 +46,7 @@ struct argx_command
 {
     char *name;
     char *description;
+    char *summary;
     argx_command_t *parent;
     argx_vec_t options;
     argx_vec_t positionals;

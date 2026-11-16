@@ -1045,6 +1045,7 @@ typedef enum mutation
     ADD_VALUE,
     ADD_POSITIONAL,
     SET_COMMAND_DESCRIPTION,
+    SET_COMMAND_SUMMARY,
     SET_COMMAND_SUBCOMMAND_OPTIONAL,
     SET_OPTION_DESCRIPTION,
     SET_OPTION_VALUE_NAME,
@@ -1055,11 +1056,11 @@ typedef enum mutation
     SET_POSITIONAL_DEFAULT
 } mutation_t;
 
-#define MUTATION_COUNT 15
+#define MUTATION_COUNT 16
 static const mutation_t all_mutations[MUTATION_COUNT] = {
     ADD_SUBCOMMAND,          ADD_FLAG,              ADD_NEGATABLE,       ADD_COUNT,
     ADD_VALUE,               ADD_POSITIONAL,        SET_COMMAND_DESCRIPTION,
-    SET_COMMAND_SUBCOMMAND_OPTIONAL,
+    SET_COMMAND_SUMMARY,     SET_COMMAND_SUBCOMMAND_OPTIONAL,
     SET_OPTION_DESCRIPTION,  SET_OPTION_VALUE_NAME, SET_OPTION_REQUIRED, SET_OPTION_DEFAULT,
     SET_OPTION_INITIAL,      SET_POSITIONAL_DESCRIPTION,
     SET_POSITIONAL_DEFAULT
@@ -1121,6 +1122,8 @@ static argx_error_t mutate(const fixture_t *fixture, mutation_t mutation)
                                            ARGX_ARITY_OPTIONAL, NULL);
     case SET_COMMAND_DESCRIPTION:
         return argx_command_set_description(fixture->target, "A description.");
+    case SET_COMMAND_SUMMARY:
+        return argx_command_set_summary(fixture->target, "A summary.");
     case SET_COMMAND_SUBCOMMAND_OPTIONAL:
         /* The target has subcommands for this change. */
         return argx_command_set_subcommand_optional(fixture->target, true);

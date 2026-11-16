@@ -740,9 +740,33 @@ static void help_write_cell_item(help_context_t *context, const help_heading_t *
 }
 
 /*
+ * Returns the length of the text that the subcommand list shows for
+ * subcommand, and stores that text in *text. A summary that holds more
+ * than blanks and newlines is shown whole, up to its trailing run (see
+ * help_whole_length()). Otherwise the first line of the description is
+ * shown (see help_first_line_length()). Returns 0 when there is nothing
+ * to show.
+ */
+static size_t help_subcommand_text(const argx_command_t *subcommand, const char **text)
+{
+    size_t newlines;
+    size_t length;
+
+    *text = argx_command_summary(subcommand);
+    length = help_whole_length(*text, &newlines);
+    if (length != 0)
+    {
+        return length;
+    }
+
+    *text = argx_command_description(subcommand);
+    return help_first_line_length(*text);
+}
+
+/*
  * Writes the subcommand list of context's command, when it has any: the
- * command's own subcommands, in the order they were added, each with the
- * first line of its description.
+ * command's own subcommands, in the order they were added, each with its
+ * summary or, without one, the first line of its description.
  */
 static void help_write_commands(help_context_t *context)
 {
@@ -759,9 +783,10 @@ static void help_write_commands(help_context_t *context)
     for (index = 0; (index < count) && !argx_out_failed(&context->out); ++index)
     {
         help_heading_t heading = help_subcommand_heading(command, index);
-        const char *text = argx_command_description(heading.subcommand);
+        const char *text;
+        size_t length = help_subcommand_text(heading.subcommand, &text);
 
-        help_write_item(context, &heading, text, help_first_line_length(text));
+        help_write_item(context, &heading, text, length);
     }
 }
 
